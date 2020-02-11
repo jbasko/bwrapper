@@ -1,7 +1,7 @@
 import abc
 import json
 import logging
-from typing import Dict, Generator, Type, get_type_hints
+from typing import Dict, Generator, Type, get_type_hints, List, Union
 from uuid import uuid4
 
 from bwrapper.boto import BotoMixin
@@ -11,6 +11,25 @@ log = logging.getLogger(__name__)
 
 
 class SqsMessage(abc.ABC):
+    """
+    Base class for custom SQS messages.
+    An SQS message class defines the accepted format of the message.
+
+    Example:
+
+        class Message(SqsMessage):
+            class MessageAttributes:
+                subject: str
+            class MessageBody:
+                body: str
+
+    MessageAttributes can only be of primitive types.
+    MessageBody can contain nested attributes (list, dict).
+
+    If a message class does not specify internal MessageBody or MessageAttributes classes,
+    it means it accepts anything in that particular section.
+    """
+
     _message_attributes_types: Dict[Type, str] = {
         str: "StringValue",
         int: "StringValue",
@@ -47,51 +66,47 @@ class SqsMessage(abc.ABC):
             for i, v in enumerate(value):
                 SqsMessage._validate_value_type(f"{name}[{i}]", v)
 
-    class _BoundMessageBody:
+    class _BoundMessagePart:
+        _internal_attrs = []
+        _parsed_content_attr: str = None  # set in subclass
+
         def __init__(self, schema, instance):
             self._schema = schema
             self._instance: SqsMessage = instance
 
+        def _has_attribute(self, name):
+            if self._schema is None:
+                return True
+            return name in self._schema or name in self._internal_attrs
+
         def __getattr__(self, name):
-            if name not in self._schema:
-                raise AttributeError(name)
-            return self._instance._parsed_body.get(name)
+            if not self._has_attribute(name):
+                raise AttributeError(f"{self._instance.__class__.__name__!r} class does not have attribute {name!r}")
+            return getattr(self._instance, self._parsed_content_attr).get(name)
 
         def __setattr__(self, name, value):
             if name.startswith("_"):
                 return super().__setattr__(name, value)
-            if name not in self._schema:
-                raise AttributeError(name)
+            if not self._has_attribute(name):
+                raise AttributeError(f"{self._instance.__class__.__name__} does not have attribute {name!r}")
             SqsMessage._validate_value_type(name, value)
-            self._instance._parsed_body[name] = value
+            getattr(self._instance, self._parsed_content_attr)[name] = value
 
         def __repr__(self):
-            return f"<{self.__class__.__name__} {self._instance._parsed_body}>"
+            return f"<{self.__class__.__name__} {getattr(self._instance, self._parsed_content_attr)}>"
 
-    class _BoundMessageAttributes:
-        def __init__(self, schema, instance):
-            self._schema = schema
-            self._instance: SqsMessage = instance
+    class _BoundMessageBody(_BoundMessagePart):
+        _parsed_content_attr = "_parsed_body"
 
-        def __getattr__(self, name):
-            if name not in self._schema:
-                raise AttributeError(name)
-            return self._instance._parsed_attributes.get(name)
-
-        def __setattr__(self, name, value):
-            if name.startswith("_"):
-                return super().__setattr__(name, value)
-            if name not in self._schema:
-                raise AttributeError(name)
-            SqsMessage._validate_value_type(name, value)
-            self._instance._parsed_attributes[name] = value
-
-        def __repr__(self):
-            return f"<{self.__class__.__name__} {self._instance._parsed_attributes}>"
+    class _BoundMessageAttributes(_BoundMessagePart):
+        _internal_attrs = ("sqs_message_type",)
+        _parsed_content_attr = "_parsed_attributes"
 
     class _MessageBody:
-        def __init__(self, schema_type: Type):
-            self.schema = get_type_hints(schema_type)
+        def __init__(self, schema_type: Type = None):
+            self.schema = None
+            if schema_type:
+                self.schema = get_type_hints(schema_type)
 
         def __get__(self, instance, owner):
             if instance is None:
@@ -102,7 +117,9 @@ class SqsMessage(abc.ABC):
 
     class _MessageAttributes:
         def __init__(self, schema_type: Type):
-            self.schema = get_type_hints(schema_type)
+            self.schema = None
+            if schema_type:
+                self.schema = get_type_hints(schema_type)
 
         def __get__(self, instance, owner):
             if instance is None:
@@ -114,19 +131,9 @@ class SqsMessage(abc.ABC):
                 )
             return getattr(instance, "_attributes")
 
-    class _UnspecifiedMessageBody:
-        pass
-
-    class _UnspecifiedMessageAttributes:
-        pass
-
     def __init_subclass__(cls, **kwargs):
-        cls.MessageBody = SqsMessage._MessageBody(
-            getattr(cls, "MessageBody", SqsMessage._UnspecifiedMessageBody),
-        )
-        cls.MessageAttributes = SqsMessage._MessageAttributes(
-            getattr(cls, "MessageAttributes", SqsMessage._UnspecifiedMessageAttributes),
-        )
+        cls.MessageBody = SqsMessage._MessageBody(getattr(cls, "MessageBody", None))
+        cls.MessageAttributes = SqsMessage._MessageAttributes(getattr(cls, "MessageAttributes", None))
 
     def __init__(
         self,
@@ -134,8 +141,15 @@ class SqsMessage(abc.ABC):
         receipt_handle: str = None,
         queue: "SqsQueue" = None,
         attributes: Dict = None,
-        body: Dict = None
+        body: Dict = None,
+        validate: bool = None,
     ):
+        """
+        By default, only attributes= and body= are validated against the schema.
+        Raw SQS message is validated only as far as it concerns known fields.
+        Unknown fields are set as given.
+        """
+
         self.receipt_handle = receipt_handle
         self._raw = raw_sqs_message
         self._raw_body = None
@@ -157,6 +171,9 @@ class SqsMessage(abc.ABC):
             for k, v in body.items():
                 setattr(self.MessageBody, k, v)
 
+        if not self._raw:
+            setattr(self.MessageAttributes, "sqs_message_type", self.__class__.__name__)
+
     @property
     def _parsed_body(self) -> Dict:
         if self._parsed_body_obj is None:
@@ -170,13 +187,21 @@ class SqsMessage(abc.ABC):
     def _parsed_attributes(self) -> Dict:
         if self._parsed_attributes_obj is None:
             parsed = {}
-            for k, v in self.MessageAttributes._schema.items():
-                if v not in self._message_attributes_types:
-                    raise RuntimeError(
-                        f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {v})",
-                    )
-                if k in self._raw_attributes:
-                    parsed[k] = self._raw_attributes[k][self._message_attributes_types[v]]
+            schema = self.MessageAttributes._schema
+            if schema is None:
+                for k, v_obj in self._raw_attributes.items():
+                    if v_obj["DataType"] == "String":
+                        parsed[k] = v_obj["StringValue"]
+                    else:
+                        parsed[k] = v_obj["BinaryValue"]
+            else:
+                for k, v in schema.items():
+                    if v not in self._message_attributes_types:
+                        raise RuntimeError(
+                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {v})",
+                        )
+                    if k in self._raw_attributes:
+                        parsed[k] = self._raw_attributes[k][self._message_attributes_types[v]]
             self._parsed_attributes_obj = parsed
         return self._parsed_attributes_obj
 
@@ -187,22 +212,29 @@ class SqsMessage(abc.ABC):
         expects "MessageBody" when sending a message and provides "Body" when receiving a message.
         """
 
-        attributes = {}
-        for k, v in self.MessageAttributes._schema.items():
+        attributes = {
+            "sqs_message_type": {"DataType": "String", "StringValue": self.__class__.__name__},
+        }
+        if self.MessageAttributes._schema:
+            schema_items = self.MessageAttributes._schema.items()
+        else:
+            schema_items = [(k, type(v)) for k, v in self._parsed_attributes.items()]
+
+        for k, t in schema_items:
             if k not in self._parsed_attributes:
                 continue
-            if v not in self._message_attributes_types:
+            if t not in self._message_attributes_types:
                 raise RuntimeError(
-                    f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {v})",
+                    f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
                 )
             attributes[k] = {}
-            if v is str:
+            if t is str:
                 attributes[k]["DataType"] = "String"
-            elif v is bytes:
+            elif t is bytes:
                 attributes[k]["DataType"] = "Binary"
             else:
                 assert False
-            attributes[k][self._message_attributes_types[v]] = self._parsed_attributes[k]
+            attributes[k][self._message_attributes_types[t]] = self._parsed_attributes[k]
 
         return {
             "MessageAttributes": attributes,
@@ -221,12 +253,7 @@ class SqsMessage(abc.ABC):
 
 
 class GenericSqsMessage(SqsMessage):
-
-    class MessageAttributes:
-        pass
-
-    class MessageBody:
-        pass
+    pass
 
 
 class SqsQueue(LogMixin, BotoMixin):
@@ -264,7 +291,7 @@ class SqsQueue(LogMixin, BotoMixin):
 
     def receive_messages(
         self,
-        message_cls: Type[SqsMessage] = GenericSqsMessage,
+        message_cls: Union[Type[SqsMessage], List[Type[SqsMessage]]] = None,
         delete=False,
         max_num_messages=10,
     ) -> Generator[SqsMessage, None, None]:
@@ -273,6 +300,14 @@ class SqsQueue(LogMixin, BotoMixin):
         SqsMessage sub-class.
         Yields nothing if no messages were seen.
         """
+        if message_cls:
+            if isinstance(message_cls, type):
+                message_classes = [message_cls]
+            else:
+                message_classes = message_cls
+        else:
+            message_classes = [GenericSqsMessage]
+
         self.log.info(f"Polling {self.url}")
         resp = self.sqs.receive_message(
             QueueUrl=self.url,

@@ -1,11 +1,12 @@
 import json
 from typing import Dict, List
 
-from bwrapper.sqs import SqsMessage
+import pytest
+
+from bwrapper.sqs import SqsMessage, GenericSqsMessage
 
 
 def test_all():
-
     class JobMessage(SqsMessage):
         class MessageAttributes:
             job_id: str
@@ -55,6 +56,10 @@ def test_all():
 
     sqs_dict = job.to_sqs_dict()
     assert sqs_dict["MessageAttributes"] == {
+        "sqs_message_type": {
+            "DataType": "String",
+            "StringValue": "JobMessage",
+        },
         "job_id": {
             "DataType": "String",
             "StringValue": "123-456",
@@ -78,6 +83,10 @@ def test_all():
 
     sqs_dict = job.to_sqs_dict()
     assert sqs_dict["MessageAttributes"] == {
+        "sqs_message_type": {
+            "DataType": "String",
+            "StringValue": "JobMessage",
+        },
         "job_id": {
             "DataType": "String",
             "StringValue": "987-654",
@@ -136,3 +145,78 @@ def test_message_body_from_dict():
     log: Log = Log(body={"account": {"name": "First"}, "transactions": [{"amount": 11}, {"amount": 20}]})
     assert log.MessageBody.account["name"] == "First"
     assert log.MessageBody.transactions[1]["amount"] == 20
+
+
+def test_serialised_message_attributes_include_message_type():
+    class Greeting(SqsMessage):
+        class MessageAttributes:
+            message: str
+
+    greeting = Greeting(attributes={"message": "hello"})
+    assert greeting.MessageAttributes.message == "hello"
+    print(greeting.to_sqs_dict())
+    assert greeting.MessageAttributes.sqs_message_type == "Greeting"
+
+
+def test_sqs_message_type_is_always_set():
+    assert GenericSqsMessage().MessageAttributes.sqs_message_type == "GenericSqsMessage"
+    assert GenericSqsMessage().to_sqs_dict()["MessageAttributes"]["sqs_message_type"] == {
+        "DataType": "String",
+        "StringValue": "GenericSqsMessage",
+    }
+
+
+def test_generic_sqs_message_accepts_anything():
+    message = GenericSqsMessage(attributes={"a": 12, "b": "23"}, body={"c": 34, "d": "45"})
+    assert message.MessageAttributes.a == 12
+    assert message.MessageAttributes.b == "23"
+    assert message.MessageBody.c == 34
+    assert message.MessageBody.d == "45"
+
+
+def test_unknown_fields_dont_raise_exception():
+    class Message(SqsMessage):
+        class MessageAttributes:
+            message: str
+
+    raw = {
+        "MessageId": "9ac265aa-c50d-4846-a980-8b98e451627f",
+        "ReceiptHandle": "blablabla",
+        "MD5OfBody": "blablabla", "Body": "{}",
+        "MD5OfMessageAttributes": "blablabla",
+        "MessageAttributes": {
+            "message": {"StringValue": "Hello", "DataType": "String"},
+            "name": {"StringValue": "world", "DataType": "String"}
+        }
+    }
+
+    message = Message(raw_sqs_message=raw)
+    assert message.MessageAttributes.message == "Hello"
+    assert not hasattr(message.MessageAttributes, "name")
+    assert message.raw["MessageAttributes"]["name"] == {"StringValue": "world", "DataType": "String"}
+
+    with pytest.raises(AttributeError):
+        message.MessageAttributes.name = "Haha"
+
+    dct = message.to_sqs_dict()
+    assert dct["MessageAttributes"] == {
+        "sqs_message_type": {"StringValue": "Message", "DataType": "String"},
+        "message": {"StringValue": "Hello", "DataType": "String"},
+    }
+
+
+def test_unknown_fields_passed_as_attributes_or_body_raises_exception():
+    # See also test_unknown_fields_dont_raise_exception
+
+    class Message(SqsMessage):
+        class MessageBody:
+            subject: str
+
+        class MessageAttributes:
+            message: str
+
+    with pytest.raises(AttributeError):
+        Message(attributes={"title": "This is the title"})
+
+    with pytest.raises(AttributeError):
+        Message(body={"body": "This is the body"})
