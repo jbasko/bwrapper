@@ -232,8 +232,11 @@ class SqsMessage(abc.ABC):
                 attributes[k]["DataType"] = "String"
             elif t is bytes:
                 attributes[k]["DataType"] = "Binary"
-            else:
-                assert False
+            elif t in (int, float):
+                attributes[k]["DataType"] = "String"
+                attributes[k]["StringValue"] = str(self._parsed_attributes[k])
+                continue
+
             attributes[k][self._message_attributes_types[t]] = self._parsed_attributes[k]
 
         return {
@@ -243,6 +246,9 @@ class SqsMessage(abc.ABC):
 
     def delete(self):
         self._queue.delete_message(self.receipt_handle)
+
+    def release(self):
+        self._queue.release_message(self.receipt_handle)
 
     @property
     def raw(self) -> Dict:
@@ -297,7 +303,9 @@ class SqsQueue(LogMixin, BotoMixin):
     ) -> Generator[SqsMessage, None, None]:
         """
         Receive multiple messages and yield them as instances of the specified
-        SqsMessage sub-class.
+        SqsMessage subclass(-es).
+        If the received message is of type not expected, the message will be immediately released
+        by changing its visibility timeout to 0 so that other consumers can see it.
         Yields nothing if no messages were seen.
         """
         if message_cls:
@@ -306,7 +314,8 @@ class SqsQueue(LogMixin, BotoMixin):
             else:
                 message_classes = message_cls
         else:
-            message_classes = [GenericSqsMessage]
+            message_classes = []
+        message_types = {mc.__name__: mc for mc in message_classes}
 
         self.log.info(f"Polling {self.url}")
         resp = self.sqs.receive_message(
@@ -323,6 +332,23 @@ class SqsQueue(LogMixin, BotoMixin):
             return
 
         for raw_message in resp["Messages"]:
+            if "MessageAttributes" in raw_message and "sqs_message_type" in raw_message["MessageAttributes"]:
+                raw_message_type_name = raw_message["MessageAttributes"]["sqs_message_type"]["StringValue"]
+                if message_types:
+                    if raw_message_type_name not in message_types:
+                        self.log.info(f"Releasing message of type {raw_message_type_name!r}")
+                        self.release_message(raw_message["ReceiptHandle"])
+                        continue
+                    else:
+                        message_cls = message_types[raw_message_type_name]
+                else:
+                    message_cls = GenericSqsMessage
+            else:
+                if message_classes:
+                    message_cls = message_classes[0]
+                else:
+                    message_cls = GenericSqsMessage
+
             message = message_cls(raw_message, receipt_handle=raw_message["ReceiptHandle"], queue=self)
             if delete:
                 message.delete()
@@ -332,4 +358,14 @@ class SqsQueue(LogMixin, BotoMixin):
         self.sqs.delete_message(
             QueueUrl=self.url,
             ReceiptHandle=receipt_handle,
+        )
+
+    def release_message(self, receipt_handle: str):
+        """
+        Make the message immediately visible to other queue consumers.
+        """
+        self.sqs.change_message_visibility(
+            QueueUrl=self.url,
+            ReceiptHandle=receipt_handle,
+            VisibilityTimeout=0,
         )
