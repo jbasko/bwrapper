@@ -1,14 +1,20 @@
+import abc
 import json
+import logging
 from typing import Dict, Generator, Type, get_type_hints
 from uuid import uuid4
 
 from bwrapper.boto import BotoMixin
 from bwrapper.log import LogMixin
 
+log = logging.getLogger(__name__)
 
-class SqsMessage:
+
+class SqsMessage(abc.ABC):
     _message_attributes_types: Dict[Type, str] = {
         str: "StringValue",
+        int: "StringValue",
+        float: "StringValue",
         bytes: "BinaryValue",
     }
 
@@ -44,7 +50,7 @@ class SqsMessage:
     class _BoundMessageBody:
         def __init__(self, schema, instance):
             self._schema = schema
-            self._instance = instance
+            self._instance: SqsMessage = instance
 
         def __getattr__(self, name):
             if name not in self._schema:
@@ -59,10 +65,13 @@ class SqsMessage:
             SqsMessage._validate_value_type(name, value)
             self._instance._parsed_body[name] = value
 
+        def __repr__(self):
+            return f"<{self.__class__.__name__} {self._instance._parsed_body}>"
+
     class _BoundMessageAttributes:
         def __init__(self, schema, instance):
             self._schema = schema
-            self._instance = instance
+            self._instance: SqsMessage = instance
 
         def __getattr__(self, name):
             if name not in self._schema:
@@ -77,9 +86,12 @@ class SqsMessage:
             SqsMessage._validate_value_type(name, value)
             self._instance._parsed_attributes[name] = value
 
+        def __repr__(self):
+            return f"<{self.__class__.__name__} {self._instance._parsed_attributes}>"
+
     class _MessageBody:
-        def __init__(self, definition: Type):
-            self.schema = get_type_hints(definition)
+        def __init__(self, schema_type: Type):
+            self.schema = get_type_hints(schema_type)
 
         def __get__(self, instance, owner):
             if instance is None:
@@ -89,8 +101,8 @@ class SqsMessage:
             return getattr(instance, "_body")
 
     class _MessageAttributes:
-        def __init__(self, schema: Type):
-            self.schema = get_type_hints(schema)
+        def __init__(self, schema_type: Type):
+            self.schema = get_type_hints(schema_type)
 
         def __get__(self, instance, owner):
             if instance is None:
@@ -102,22 +114,48 @@ class SqsMessage:
                 )
             return getattr(instance, "_attributes")
 
-    def __init_subclass__(cls, **kwargs):
-        cls.MessageBody = SqsMessage._MessageBody(cls.MessageBody)
-        cls.MessageAttributes = SqsMessage._MessageAttributes(cls.MessageAttributes)
+    class _UnspecifiedMessageBody:
+        pass
 
-    def __init__(self, raw_sqs_message=None, receipt_handle: str = None, queue: "SqsQueue" = None):
+    class _UnspecifiedMessageAttributes:
+        pass
+
+    def __init_subclass__(cls, **kwargs):
+        cls.MessageBody = SqsMessage._MessageBody(
+            getattr(cls, "MessageBody", SqsMessage._UnspecifiedMessageBody),
+        )
+        cls.MessageAttributes = SqsMessage._MessageAttributes(
+            getattr(cls, "MessageAttributes", SqsMessage._UnspecifiedMessageAttributes),
+        )
+
+    def __init__(
+        self,
+        raw_sqs_message=None,
+        receipt_handle: str = None,
+        queue: "SqsQueue" = None,
+        attributes: Dict = None,
+        body: Dict = None
+    ):
         self.receipt_handle = receipt_handle
+        self._raw = raw_sqs_message
         self._raw_body = None
         self._raw_attributes = {}
-        if raw_sqs_message:
-            self._raw_body = raw_sqs_message["Body"]
-            self._raw_attributes = raw_sqs_message["MessageAttributes"]
+        if self._raw:
+            self._raw_body = self._raw["Body"]
+            self._raw_attributes = self._raw.get("MessageAttributes", None) or {}
         self._parsed_body_obj = None
         self._parsed_attributes_obj = None
 
         # Only set for received messages
         self._queue: "SqsQueue" = queue
+
+        if attributes:
+            for k, v in attributes.items():
+                setattr(self.MessageAttributes, k, v)
+
+        if body:
+            for k, v in body.items():
+                setattr(self.MessageBody, k, v)
 
     @property
     def _parsed_body(self) -> Dict:
@@ -174,8 +212,21 @@ class SqsMessage:
     def delete(self):
         self._queue.delete_message(self.receipt_handle)
 
+    @property
+    def raw(self) -> Dict:
+        return self._raw
+
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.to_sqs_dict()}>"
+
+
+class GenericSqsMessage(SqsMessage):
+
+    class MessageAttributes:
+        pass
+
+    class MessageBody:
+        pass
 
 
 class SqsQueue(LogMixin, BotoMixin):
@@ -183,14 +234,20 @@ class SqsQueue(LogMixin, BotoMixin):
     def __init__(self, url):
         self.url = url
 
+    @property
+    def is_fifo(self):
+        return self.url.endswith(".fifo")
+
     def send_message(self, message: SqsMessage):
         self.log.info(f"Sending message to {self.url}")
+        params = dict(
+            QueueUrl=self.url,
+            **message.to_sqs_dict(),
+        )
+        if self.is_fifo and "MessageGroupId" not in params:
+            params["MessageGroupId"] = str(uuid4())
         try:
-            self.sqs.send_message(
-                QueueUrl=self.url,
-                **message.to_sqs_dict(),
-                MessageGroupId=str(uuid4()),
-            )
+            self.sqs.send_message(**params)
         except Exception:
             self.log.error(f"Sending message {message} failed:")
             raise
@@ -207,7 +264,7 @@ class SqsQueue(LogMixin, BotoMixin):
 
     def receive_messages(
         self,
-        message_cls: Type[SqsMessage],
+        message_cls: Type[SqsMessage] = GenericSqsMessage,
         delete=False,
         max_num_messages=10,
     ) -> Generator[SqsMessage, None, None]:

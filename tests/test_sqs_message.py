@@ -1,5 +1,5 @@
 import json
-from typing import Dict
+from typing import Dict, List
 
 from bwrapper.sqs import SqsMessage
 
@@ -97,3 +97,42 @@ def test_all():
     job2 = JobMessage()
     job2.MessageBody.uuid = "5555-5555"
     assert job2.MessageBody.uuid == "5555-5555"
+
+
+def test_message_body_and_message_attributes_definitions_are_optional():
+    class Message1(SqsMessage):
+        pass
+
+    class Message2(SqsMessage):
+        class MessageBody:
+            pass
+
+    class Message3(SqsMessage):
+        class MessageAttributes:
+            pass
+
+    Message1()
+    Message2()
+    Message3()
+
+
+def test_message_attributes_from_dict():
+    class Tx(SqsMessage):
+        class MessageAttributes:
+            currency: str
+            amount: int
+
+    tx: Tx = Tx(attributes={"currency": "GBP", "amount": 123})
+    assert tx.MessageAttributes.currency == "GBP"
+    assert tx.MessageAttributes.amount == 123
+
+
+def test_message_body_from_dict():
+    class Log(SqsMessage):
+        class MessageBody:
+            account: Dict
+            transactions: List
+
+    log: Log = Log(body={"account": {"name": "First"}, "transactions": [{"amount": 11}, {"amount": 20}]})
+    assert log.MessageBody.account["name"] == "First"
+    assert log.MessageBody.transactions[1]["amount"] == 20

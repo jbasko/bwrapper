@@ -1,7 +1,6 @@
+import dataclasses
 import time
 from typing import Callable, List
-
-import dataclasses
 
 from bwrapper.log import LogMixin
 
