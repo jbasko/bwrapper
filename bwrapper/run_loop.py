@@ -32,7 +32,7 @@ class RunLoop(LogMixin):
         def __str__(self):
             return str(self.run_loop)
 
-    def runs(self):
+    def should_run(self):
         """
         Returns True if the RunLoop should continue running.
         """
@@ -68,9 +68,9 @@ class RunLoop(LogMixin):
 
     def loop_over(self, callback: Callable):
         """
-        Repeatedly calls the callback as long as runs() returns True.
+        Repeatedly calls the callback as long as should_run() returns True.
         """
-        while self.runs():
+        while self.should_run():
             callback()
 
     def stop(self):

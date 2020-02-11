@@ -13,7 +13,7 @@ def test_run_loop_respects_max_iterations():
     assert len(calls) == 5
     assert run_loop.current_iteration == 5
 
-    assert not run_loop.runs()
+    assert not run_loop.should_run()
     assert run_loop.current_iteration == 5
 
     run_loop.loop_over(lambda: calls.append(1))
