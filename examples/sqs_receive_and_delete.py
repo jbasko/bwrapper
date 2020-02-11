@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from bwrapper.sqs import SqsMessage, SqsQueue, GenericSqsMessage
+from bwrapper.sqs import GenericSqsMessage, SqsMessage, SqsQueue
 
 
 class Greeting(SqsMessage):

@@ -1,7 +1,7 @@
 import abc
 import json
 import logging
-from typing import Dict, Generator, Type, get_type_hints, List, Union
+from typing import Dict, Generator, List, Type, Union, get_type_hints
 from uuid import uuid4
 
 from bwrapper.boto import BotoMixin

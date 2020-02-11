@@ -3,7 +3,7 @@ from typing import Dict, List
 
 import pytest
 
-from bwrapper.sqs import SqsMessage, GenericSqsMessage
+from bwrapper.sqs import GenericSqsMessage, SqsMessage
 
 
 def test_all():
