@@ -1,13 +1,13 @@
 import pytest
 
-from bwrapper.type_hint_attrs import (
-    _TypeHintsBasedAttr,
-    _TypeHintsBasedAttrs,
-    _TypeHintsBasedBoundAttrs
+from bwrapper.type_hints_attrs import (
+    _Attr,
+    TypeHintsAttrs,
+    _TypeHintsBoundAttrs
 )
 
 
-def test_type_hints_based_attrs_internals():
+def test_internals():
     storage = {}
 
     class Container:
@@ -18,9 +18,9 @@ def test_type_hints_based_attrs_internals():
 
         storage["original_X"] = X
 
-        x = _TypeHintsBasedAttrs(definition=X)
+        x = TypeHintsAttrs(definition=X)
 
-    assert isinstance(Container.x, _TypeHintsBasedAttrs)
+    assert isinstance(Container.x, TypeHintsAttrs)
     assert Container.x._name == "x"
     assert Container.x._attr_name == "x"
     assert Container.x._owner is Container
@@ -32,13 +32,13 @@ def test_type_hints_based_attrs_internals():
     assert hasattr(Container.x, "c")
     assert not hasattr(Container.x, "d")
 
-    assert isinstance(Container.x.a, _TypeHintsBasedAttr)
+    assert isinstance(Container.x.a, _Attr)
     assert Container.x.a.default is None
     assert Container.x.a.type_hint is int
     assert Container.x.a.name == "a"
 
     cont = Container()
-    assert isinstance(cont.x, _TypeHintsBasedBoundAttrs)
+    assert isinstance(cont.x, _TypeHintsBoundAttrs)
     assert cont.x.a is None
 
     cont.x._parent._name == "x"
@@ -66,7 +66,7 @@ def test_subclass_approach():
             pass
 
         def __init_subclass__(cls, **kwargs):
-            _TypeHintsBasedAttrs.init_for(target_cls=cls, name="x", definition=getattr(cls, "x", Base.x))
+            TypeHintsAttrs.init_for(target_cls=cls, name="x", definition=getattr(cls, "x", Base.x))
 
     class Derived(Base):
         class x:
@@ -95,7 +95,7 @@ def test_subclass_approach():
 def test_update_helper():
     class Base:
         def __init_subclass__(cls, **kwargs):
-            _TypeHintsBasedAttrs.init_for(target_cls=cls, name="x", definition=cls.x)
+            TypeHintsAttrs.init_for(target_cls=cls, name="x", definition=cls.x)
 
     class C(Base):
         class x:

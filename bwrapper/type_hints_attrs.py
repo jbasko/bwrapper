@@ -1,7 +1,7 @@
 from typing import Any, Type, get_type_hints
 
 
-class _TypeHintsBasedAttr:
+class _Attr:
     def __init__(self, *, name, type_hint, default=None):
         self.name = name
         self.type_hint = type_hint
@@ -26,11 +26,11 @@ class _TypeHintsBasedAttr:
         return value
 
 
-class _TypeHintsBasedAttrs:
+class TypeHintsAttrs:
     @classmethod
     def init_for(cls, *, target_cls: Type, name: str, definition: Type, **kwargs):
         """
-        Correctly initialise the _TypeHintsBasedAttrs descriptor on the target class.
+        Correctly initialise the TypeHintsAttrs descriptor on the target class.
 
         This is needed because setting just the attribute to the descriptor isn't enough
         when called in __init_subclass__ which is where it would be usually called.
@@ -45,7 +45,7 @@ class _TypeHintsBasedAttrs:
         self._definition = definition
         self._type_hints = get_type_hints(definition)
         self._attrs = {
-            k: _TypeHintsBasedAttr(name=k, type_hint=t, default=getattr(self._definition, k, None))
+            k: _Attr(name=k, type_hint=t, default=getattr(self._definition, k, None))
             for k, t in self._type_hints.items()
         }
 
@@ -64,7 +64,7 @@ class _TypeHintsBasedAttrs:
             return self
 
         if not hasattr(instance, self._instance_attr_name):
-            setattr(instance, self._instance_attr_name, _TypeHintsBasedBoundAttrs(parent=self, instance=instance))
+            setattr(instance, self._instance_attr_name, _TypeHintsBoundAttrs(parent=self, instance=instance))
         return getattr(instance, self._instance_attr_name)
 
     def _has_attribute(self, name):
@@ -93,8 +93,8 @@ class _TypeHintsBasedAttrs:
         raise NotImplementedError()
 
 
-class _TypeHintsBasedBoundAttrs:
-    def __init__(self, parent: _TypeHintsBasedAttrs, instance: Any):
+class _TypeHintsBoundAttrs:
+    def __init__(self, parent: TypeHintsAttrs, instance: Any):
         self._parent = parent
         self._instance = instance
         self._values = {}
@@ -102,8 +102,8 @@ class _TypeHintsBasedBoundAttrs:
         if not self._parent._attr_name:
             raise RuntimeError(
                 f"{parent} is not fully initialised, it is missing _attr_name; "
-                f"If you are initialising {_TypeHintsBasedAttrs.__name__} from __init_subclass__ you "
-                f"need to do it with {_TypeHintsBasedAttrs.__name__}.{_TypeHintsBasedAttrs.init_for.__name__}(...)"
+                f"If you are initialising {TypeHintsAttrs.__name__} from __init_subclass__ you "
+                f"need to do it with {TypeHintsAttrs.__name__}.{TypeHintsAttrs.init_for.__name__}(...)"
             )
 
     def __getattr__(self, name):
