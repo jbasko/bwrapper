@@ -21,7 +21,15 @@ from bwrapper.sqs import SqsMessage, SqsQueue
 log = logging.getLogger(__name__)
 
 
-class _JobFailed(Exception):
+class JobsyException(Exception):
+    pass
+
+
+class _JobFailed(JobsyException):
+    pass
+
+
+class _BadMessage(JobsyException):
     pass
 
 
@@ -196,7 +204,7 @@ class Jobsy(LogMixin, RunLoopMixin):
             self.log.debug("Completed iteration, no messages received")
             return
 
-        self.log.info(f"Received {message}")
+        self.log.info(f"Received {message}: {message.raw}")
         job = message.resolve_job()
 
         # Ensure that we hold on to the message for at least as long as the interval

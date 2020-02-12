@@ -339,7 +339,7 @@ class SqsQueue(LogMixin, BotoMixin):
             message_classes = []
         message_types = {mc.__name__: mc for mc in message_classes}
 
-        self.log.info(f"Polling {self.url}")
+        self.log.info(f"Polling {self.url} for message types [{', '.join(message_types)}]")
         resp = self.sqs.receive_message(
             QueueUrl=self.url,
             MaxNumberOfMessages=max_num_messages,
@@ -354,24 +354,35 @@ class SqsQueue(LogMixin, BotoMixin):
             return
 
         for raw_message in resp["Messages"]:
+            receipt_handle = raw_message["ReceiptHandle"]
+
             if "MessageAttributes" in raw_message and "sqs_message_type" in raw_message["MessageAttributes"]:
                 raw_message_type_name = raw_message["MessageAttributes"]["sqs_message_type"]["StringValue"]
                 if message_types:
                     if raw_message_type_name not in message_types:
                         self.log.info(f"Releasing message of type {raw_message_type_name!r}")
-                        self.release_message(receipt_handle=raw_message["ReceiptHandle"])
+                        self.release_message(receipt_handle=receipt_handle)
                         continue
                     else:
                         message_cls = message_types[raw_message_type_name]
                 else:
+                    self.log.debug(
+                        f"Interpreting message of type {raw_message_type_name} as {GenericSqsMessage.__name__}"
+                    )
                     message_cls = GenericSqsMessage
+            elif message_types:
+                self.log.info(f"Releasing message of unspecified type")
+                self.release_message(receipt_handle=receipt_handle)
+                continue
             else:
-                if message_classes:
-                    message_cls = message_classes[0]
-                else:
-                    message_cls = GenericSqsMessage
+                self.log.debug(f"Interpreting message of unspecified type as {GenericSqsMessage.__name__}")
+                message_cls = GenericSqsMessage
 
-            message = message_cls(raw_message, receipt_handle=raw_message["ReceiptHandle"], queue=self)
+            message = message_cls(
+                raw_sqs_message=raw_message,
+                receipt_handle=raw_message["ReceiptHandle"],
+                queue=self,
+            )
             if delete:
                 message.delete()
             yield message
