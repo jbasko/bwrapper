@@ -1,3 +1,18 @@
+"""
+If you are getting error:
+
+    TypeError: __init__() takes 2 positional arguments but 4 were given
+
+it means you're inheriting from something that is not a class. Note that the dummy attribute declaration classes
+are replaced during class initialisation so they can no longer be inherited from:
+
+    class X(Base):
+        class attrs(Base.attrs):  <-- this is incorrect! The actual attrs of Base will be inherited automatically.
+            pass
+
+"""
+
+
 from typing import Any, Type, get_type_hints
 
 
@@ -43,19 +58,40 @@ class TypeHintsAttrs:
         This is needed because setting just the attribute to the descriptor isn't enough
         when called in __init_subclass__ which is where it would be usually called.
         """
+
         if definition is None:
+            # definition is a type (a class) which uses type hints to declare fields.
+            # If target_cls inherits from another class then we should check if its base class(-es) don't
+            # define fields for this attribute collection.
+            # If they do, we must include their type hints in the type hints for this definition too.
+            # We do that by constructing types on the fly that inherit.
+            # TODO Perhaps it would have been better to merge actual type hints.
+
+            own_definition = None
             if name in target_cls.__dict__:
-                definition = target_cls.__dict__[name]
+                own_definition = target_cls.__dict__[name]
 
-            # Inherit definition from parent class
-            elif hasattr(target_cls, name):
-                definition = getattr(target_cls, name)
-                if isinstance(definition, TypeHintsAttrs):
-                    definition = definition._definition
+            parent_definitions = [
+                getattr(b, name)._definition
+                for b in target_cls.__bases__
+                if isinstance(getattr(b, name, None), TypeHintsAttrs)
+            ]
 
-            if definition is None:
-                # Unspecified.
-                definition = type(f"Unspecified", (), {})
+            if own_definition:
+                if parent_definitions:
+                    definition = type(name, (own_definition, *parent_definitions), {})
+                else:
+                    definition = own_definition
+            else:
+                if parent_definitions:
+                    definition = type(name, (*parent_definitions,), {})
+                else:
+                    definition = type("Unspecified", (), {})
+
+        else:
+            # Make sure that the definition type does not extend from TypeHintsAttrs
+            # which would be the case if someone tried to specify inheritance manually.
+            pass
 
         setattr(target_cls, name, cls(definition=definition, **kwargs))
         getattr(target_cls, name).__set_name__(target_cls, name)

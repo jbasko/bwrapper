@@ -144,3 +144,14 @@ def test_init_for_without_definition(X):
 def test_iterate_over_attrs(X):
     x = X()
     assert set(x.attrs) == {"a", "b", "c"}
+
+
+def test_inherited_attrs(X):
+    class Y(X):
+        class attrs:
+            d: int
+
+    y = Y(a="1", b="2", d="3")
+    assert y.attrs.a == 1
+    assert y.attrs.b == "2"
+    assert y.attrs.d == 3
