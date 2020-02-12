@@ -3,7 +3,7 @@ from typing import Type
 
 import pytest
 
-from bwrapper.notifier import SnsMessage
+from bwrapper.notsy import SnsMessage
 
 
 @pytest.fixture

@@ -109,7 +109,11 @@ class SnsMessage(_SnsMessageBase):
         return instance
 
 
-class Notifier(BotoMixin, LogMixin):
+class Notsy(BotoMixin, LogMixin):
+    """
+    A simple SNS notification publisher.
+    """
+
     def __init__(self):
         super().__init__()
 
@@ -133,7 +137,7 @@ def main():
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.INFO)
 
-    notifier = Notifier()
+    notifier = Notsy()
     notifier.publish(SnsMessage(
         subject=args.subject,
         topic_arn=args.topic_arn,

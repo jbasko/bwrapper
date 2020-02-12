@@ -3,8 +3,8 @@ from typing import Type
 import pytest
 
 from bwrapper.type_hints_attrs import (
-    _Attr,
     TypeHintsAttrs,
+    _Attr,
     _TypeHintsBoundAttrs
 )
 
