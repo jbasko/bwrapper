@@ -1,5 +1,5 @@
 import boto3
-from botocore.config import Config
+# from botocore.config import Config
 
 
 class Boto:
@@ -40,11 +40,14 @@ class Boto:
             return self.instance
 
     sqs = ClientOrResource(requires_region=True)
-    sfn = ClientOrResource(service_name="stepfunctions", requires_region=True)
-    sfn_long_poll = ClientOrResource(service_name="stepfunctions", requires_region=True, config=Config(read_timeout=65))
-    dynamodb_resource = ClientOrResource(type="resource", service_name="dynamodb", requires_region=True)
-    dynamodb_client = ClientOrResource(type="client", service_name="dynamodb", requires_region=True)
-    lambda_client = ClientOrResource(type="client", service_name="lambda", requires_region=True)
+    sns = ClientOrResource(requires_region=True)
+
+    # Examples:
+    # sfn = ClientOrResource(service_name="stepfunctions", requires_region=True)
+    # sfn_long_poll = ClientOrResource(service_name="stepfunctions", requires_region=True, config=Config(read_timeout=65))
+    # dynamodb_resource = ClientOrResource(type="resource", service_name="dynamodb", requires_region=True)
+    # dynamodb_client = ClientOrResource(type="client", service_name="dynamodb", requires_region=True)
+    # lambda_client = ClientOrResource(type="client", service_name="lambda", requires_region=True)
 
 
 class BotoMixin:
@@ -53,21 +56,5 @@ class BotoMixin:
         return Boto.sqs
 
     @property
-    def sfn(self):
-        return Boto.sfn
-
-    @property
-    def sfn_long_poll(self):
-        return Boto.sfn_long_poll
-
-    @property
-    def dynamodb_resource(self):
-        return Boto.dynamodb_resource
-
-    @property
-    def dynamodb_client(self):
-        return Boto.dynamodb_client
-
-    @property
-    def lambda_client(self):
-        return Boto.lambda_client
+    def sns(self):
+        return Boto.sns
