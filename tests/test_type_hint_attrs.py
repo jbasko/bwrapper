@@ -108,3 +108,27 @@ def test_update_helper():
     assert c1.x.p == 23
     assert c1.x.q == 1.23
     assert c1.x.r is False
+
+
+def test_init_for_without_definition():
+    class Base:
+        class attrs:
+            pass
+
+        def __init_subclass__(cls, **kwargs):
+            TypeHintsAttrs.init_for(target_cls=cls, name="attrs")
+
+        def __init__(self, **attrs):
+            super().__init__()
+            self.attrs._update(**attrs)
+
+    class X(Base):
+        class attrs:
+            a: int
+            b: str
+            c: float
+
+    x = X(a="1", b="2")
+    assert x.attrs.a == 1
+    assert x.attrs.b == "2"
+    assert x.attrs.c is None

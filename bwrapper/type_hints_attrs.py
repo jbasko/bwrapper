@@ -28,13 +28,17 @@ class _Attr:
 
 class TypeHintsAttrs:
     @classmethod
-    def init_for(cls, *, target_cls: Type, name: str, definition: Type, **kwargs):
+    def init_for(cls, *, target_cls: Type, name: str, definition: Type = None, **kwargs):
         """
         Correctly initialise the TypeHintsAttrs descriptor on the target class.
 
         This is needed because setting just the attribute to the descriptor isn't enough
         when called in __init_subclass__ which is where it would be usually called.
         """
+        if definition is None and hasattr(target_cls, name):
+            definition = getattr(target_cls, name)
+        if definition is None:
+            raise ValueError("definition is required, got None")
         setattr(target_cls, name, cls(definition=definition, **kwargs))
         getattr(target_cls, name).__set_name__(target_cls, name)
 
