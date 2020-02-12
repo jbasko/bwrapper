@@ -154,7 +154,6 @@ def test_serialised_message_attributes_include_message_type():
 
     greeting = Greeting(attributes={"message": "hello"})
     assert greeting.MessageAttributes.message == "hello"
-    print(greeting.to_sqs_dict())
     assert greeting.MessageAttributes.sqs_message_type == "Greeting"
 
 
@@ -220,3 +219,28 @@ def test_unknown_fields_passed_as_attributes_or_body_raises_exception():
 
     with pytest.raises(AttributeError):
         Message(body={"body": "This is the body"})
+
+
+def test_int_and_bool_message_attributes():
+    class Message(SqsMessage):
+        class MessageAttributes:
+            timeout: int
+            validate: bool
+
+    message = Message(attributes={"timeout": "123", "validate": 0})
+    assert message.MessageAttributes.timeout == 123
+    assert message.MessageAttributes.validate is False
+
+    raw = {
+        "MessageId": "9ac265aa-c50d-4846-a980-8b98e451627f",
+        "ReceiptHandle": "blablabla",
+        "MD5OfBody": "blablabla", "Body": "{}",
+        "MD5OfMessageAttributes": "blablabla",
+        "MessageAttributes": {
+            "timeout": {"StringValue": "123", "DataType": "String"},
+            "validate": {"StringValue": "True", "DataType": "String"},
+        }
+    }
+    message = Message(raw_sqs_message=raw)
+    assert message.MessageAttributes.timeout == 123
+    assert message.MessageAttributes.validate is True

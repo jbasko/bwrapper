@@ -33,6 +33,7 @@ class SqsMessage(abc.ABC):
     _message_attributes_types: Dict[Type, str] = {
         str: "StringValue",
         int: "StringValue",
+        bool: "StringValue",
         float: "StringValue",
         bytes: "BinaryValue",
     }
@@ -48,6 +49,22 @@ class SqsMessage(abc.ABC):
         bool,
         float,
     )
+
+    @classmethod
+    def _parse_value(cls, value_type, value):
+        if value is None or value == "None":
+            return None
+        if value_type in (int, float, str):
+            return value_type(value)
+        if value_type is bool:
+            if isinstance(value, bool):
+                return value
+            if value in ("True", "true", "yes", "y", "1"):
+                return True
+            elif value in ("False", "false", "no", "n", "0"):
+                return False
+            return bool(value)
+        return value
 
     @classmethod
     def _validate_value_type(cls, name, value):
@@ -90,6 +107,8 @@ class SqsMessage(abc.ABC):
             if not self._has_attribute(name):
                 raise AttributeError(f"{self._instance.__class__.__name__} does not have attribute {name!r}")
             SqsMessage._validate_value_type(name, value)
+            if self._schema:
+                value = SqsMessage._parse_value(self._schema.get(name), value)
             getattr(self._instance, self._parsed_content_attr)[name] = value
 
         def __repr__(self):
@@ -142,7 +161,6 @@ class SqsMessage(abc.ABC):
         queue: "SqsQueue" = None,
         attributes: Dict = None,
         body: Dict = None,
-        validate: bool = None,
     ):
         """
         By default, only attributes= and body= are validated against the schema.
@@ -195,13 +213,14 @@ class SqsMessage(abc.ABC):
                     else:
                         parsed[k] = v_obj["BinaryValue"]
             else:
-                for k, v in schema.items():
-                    if v not in self._message_attributes_types:
+                for k, t in schema.items():
+                    if t not in self._message_attributes_types:
                         raise RuntimeError(
-                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {v})",
+                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
                         )
                     if k in self._raw_attributes:
-                        parsed[k] = self._raw_attributes[k][self._message_attributes_types[v]]
+                        value = self._raw_attributes[k][self._message_attributes_types[t]]
+                        parsed[k] = SqsMessage._parse_value(t, value)
             self._parsed_attributes_obj = parsed
         return self._parsed_attributes_obj
 
@@ -245,10 +264,13 @@ class SqsMessage(abc.ABC):
         }
 
     def delete(self):
-        self._queue.delete_message(self.receipt_handle)
+        self._queue.delete_message(receipt_handle=self.receipt_handle)
 
     def release(self):
-        self._queue.release_message(self.receipt_handle)
+        self._queue.release_message(receipt_handle=self.receipt_handle)
+
+    def hold(self, timeout: int):
+        self._queue.hold_message(receipt_handle=self.receipt_handle, timeout=timeout)
 
     @property
     def raw(self) -> Dict:
@@ -337,7 +359,7 @@ class SqsQueue(LogMixin, BotoMixin):
                 if message_types:
                     if raw_message_type_name not in message_types:
                         self.log.info(f"Releasing message of type {raw_message_type_name!r}")
-                        self.release_message(raw_message["ReceiptHandle"])
+                        self.release_message(receipt_handle=raw_message["ReceiptHandle"])
                         continue
                     else:
                         message_cls = message_types[raw_message_type_name]
@@ -354,18 +376,28 @@ class SqsQueue(LogMixin, BotoMixin):
                 message.delete()
             yield message
 
-    def delete_message(self, receipt_handle: str):
+    def delete_message(self, *, receipt_handle: str):
         self.sqs.delete_message(
             QueueUrl=self.url,
             ReceiptHandle=receipt_handle,
         )
 
-    def release_message(self, receipt_handle: str):
-        """
-        Make the message immediately visible to other queue consumers.
-        """
+    def change_visibility_timeout(self, *, receipt_handle: str, timeout: int):
         self.sqs.change_message_visibility(
             QueueUrl=self.url,
             ReceiptHandle=receipt_handle,
-            VisibilityTimeout=0,
+            VisibilityTimeout=int(round(timeout)),
         )
+
+    def release_message(self, *, receipt_handle: str):
+        """
+        Make the message immediately visible to other queue consumers.
+        """
+        self.change_visibility_timeout(receipt_handle=receipt_handle, timeout=0)
+
+    def hold_message(self, *, receipt_handle: str, timeout: int):
+        """
+        Request the message to not be released for another `timeout` seconds.
+        This is just an alias for change_visibility_timeout()
+        """
+        self.change_visibility_timeout(receipt_handle=receipt_handle, timeout=timeout)
