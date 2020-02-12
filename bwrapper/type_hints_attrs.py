@@ -25,6 +25,14 @@ class _Attr:
 
         return value
 
+    @property
+    def type(self) -> Type:
+        if isinstance(self.type_hint, type):
+            return self.type_hint
+        elif getattr(self.type_hint, "__origin__", None):
+            return self.type_hint.__origin__
+        return self.type_hint
+
 
 class TypeHintsAttrs:
     @classmethod
@@ -96,6 +104,15 @@ class TypeHintsAttrs:
         """
         raise NotImplementedError()
 
+    def __iter__(self):
+        return iter(self._attrs)
+
+    def __getitem__(self, name) -> _Attr:
+        return self._attrs[name]
+
+    def __len__(self):
+        return len(self._attrs)
+
 
 class _TypeHintsBoundAttrs:
     def __init__(self, parent: TypeHintsAttrs, instance: Any):
@@ -138,3 +155,12 @@ class _TypeHintsBoundAttrs:
             raise AttributeError(message) from exception
         else:
             raise AttributeError(message)
+
+    def __iter__(self):
+        return iter(self._parent._attrs)
+
+    def __getitem__(self, name) -> _Attr:
+        return self._parent._attrs[name]
+
+    def __len__(self):
+        return len(self._parent._attrs)

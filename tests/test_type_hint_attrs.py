@@ -1,3 +1,5 @@
+from typing import Type
+
 import pytest
 
 from bwrapper.type_hints_attrs import (
@@ -110,7 +112,8 @@ def test_update_helper():
     assert c1.x.r is False
 
 
-def test_init_for_without_definition():
+@pytest.fixture
+def X() -> Type:
     class Base:
         class attrs:
             pass
@@ -128,7 +131,16 @@ def test_init_for_without_definition():
             b: str
             c: float
 
+    return X
+
+
+def test_init_for_without_definition(X):
     x = X(a="1", b="2")
     assert x.attrs.a == 1
     assert x.attrs.b == "2"
     assert x.attrs.c is None
+
+
+def test_iterate_over_attrs(X):
+    x = X()
+    assert set(x.attrs) == {"a", "b", "c"}
