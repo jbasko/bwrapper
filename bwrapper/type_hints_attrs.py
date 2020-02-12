@@ -43,10 +43,20 @@ class TypeHintsAttrs:
         This is needed because setting just the attribute to the descriptor isn't enough
         when called in __init_subclass__ which is where it would be usually called.
         """
-        if definition is None and hasattr(target_cls, name):
-            definition = getattr(target_cls, name)
         if definition is None:
-            raise ValueError("definition is required, got None")
+            if name in target_cls.__dict__:
+                definition = target_cls.__dict__[name]
+
+            # Inherit definition from parent class
+            elif hasattr(target_cls, name):
+                definition = getattr(target_cls, name)
+                if isinstance(definition, TypeHintsAttrs):
+                    definition = definition._definition
+
+            if definition is None:
+                # Unspecified.
+                definition = type(f"Unspecified", (), {})
+
         setattr(target_cls, name, cls(definition=definition, **kwargs))
         getattr(target_cls, name).__set_name__(target_cls, name)
 
