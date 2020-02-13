@@ -15,32 +15,14 @@ def test_all():
             uuid: str
             request: Dict
 
-    class JobStatusMessage(SqsMessage):
-        class MessageAttributes:
-            job_id: str
-
-        class MessageBody:
-            uuid: str
-            update: Dict
-
-    assert JobMessage.MessageBody.schema == {
-        "uuid": str,
-        "request": Dict,
-    }
-
-    assert JobStatusMessage.MessageBody.schema == {
-        "uuid": str,
-        "update": Dict,
-    }
-
-    job = JobMessage({
+    job = JobMessage.from_sqs_dict({
         "MessageAttributes": {
             "job_id": {
                 "DataType": "string",
                 "StringValue": "123-456",
             },
         },
-        "Body": json.dumps({
+        "MessageBody": json.dumps({
             "uuid": "1234-1234-1234-1234",
             "request": {
                 "version": "JobRequest-1.0",
@@ -166,15 +148,21 @@ def test_sqs_message_type_is_always_set():
 
 
 def test_generic_sqs_message_accepts_anything():
+    assert GenericSqsMessage.MessageAttributes._definition.accepts_anything
+    assert GenericSqsMessage.MessageBody._definition.accepts_anything
+
     message = GenericSqsMessage(attributes={"a": 12, "b": "23"}, body={"c": 34, "d": "45"})
+    assert message.MessageAttributes._accepts_anything
+    assert message.MessageBody._accepts_anything
+
     assert message.MessageAttributes.a == 12
     assert message.MessageAttributes.b == "23"
     assert message.MessageBody.c == 34
     assert message.MessageBody.d == "45"
 
 
-def test_unknown_fields_dont_raise_exception():
-    class Message(SqsMessage):
+def test_generic_sqs_message_with_unknown_fields_doesnt_raise_exception():
+    class Message(GenericSqsMessage):
         class MessageAttributes:
             message: str
 
@@ -189,14 +177,11 @@ def test_unknown_fields_dont_raise_exception():
         }
     }
 
-    message = Message(raw_sqs_message=raw)
+    message = Message.from_sqs_dict(raw)
     assert message.MessageAttributes.message == "Hello"
-    assert not hasattr(message.MessageAttributes, "name")
-    assert message.raw["MessageAttributes"]["name"] == {"StringValue": "world", "DataType": "String"}
+    assert message.MessageAttributes.name == "world"
 
-    with pytest.raises(AttributeError):
-        message.MessageAttributes.name = "Haha"
-
+    # Serialised form does NOT contain the unknown fields.
     dct = message.to_sqs_dict()
     assert dct["MessageAttributes"] == {
         "sqs_message_type": {"StringValue": "Message", "DataType": "String"},
@@ -241,6 +226,6 @@ def test_int_and_bool_message_attributes():
             "validate": {"StringValue": "True", "DataType": "String"},
         }
     }
-    message = Message(raw_sqs_message=raw)
+    message = Message.from_sqs_dict(raw)
     assert message.MessageAttributes.timeout == 123
     assert message.MessageAttributes.validate is True

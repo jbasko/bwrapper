@@ -30,11 +30,11 @@ class _Attr:
             return self.type_hint(value)
 
         if self.type_hint is bool:
-            if isinstance(value, bool):
-                return value
+            if isinstance(value, int):
+                return bool(value)
             if value in ("True", "true", "yes", "y", "1"):
                 return True
-            elif value in ("False", "false", "no", "n", "0"):
+            elif value in ("False", "false", "no", "n", "0", "None"):
                 return False
             raise ValueError(value)
 
@@ -47,6 +47,9 @@ class _Attr:
         elif getattr(self.type_hint, "__origin__", None):
             return self.type_hint.__origin__
         return self.type_hint
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} {self.name!r}>"
 
 
 class TypeHintsAttrs:
@@ -125,6 +128,13 @@ class TypeHintsAttrs:
             setattr(instance, self._instance_attr_name, _TypeHintsBoundAttrs(parent=self, instance=instance))
         return getattr(instance, self._instance_attr_name)
 
+    @property
+    def _accepts_anything(self):
+        """
+        True if this attribute collection allows setting any attributes (schema-less).
+        """
+        return getattr(self._definition, "accepts_anything", False)
+
     def _has_attribute(self, name):
         return name in self._attrs
 
@@ -173,18 +183,30 @@ class _TypeHintsBoundAttrs:
                 f"need to do it with {TypeHintsAttrs.__name__}.{TypeHintsAttrs.init_for.__name__}(...)"
             )
 
+    @property
+    def _accepts_anything(self):
+        return self._parent._accepts_anything
+
+    def _has_attribute(self, name):
+        return self._parent._has_attribute(name)
+
     def __getattr__(self, name):
-        if self._parent._has_attribute(name):
+        if self._has_attribute(name):
             if name not in self._values:
                 return getattr(self._parent, name).default
+            return self._values[name]
+        if self._accepts_anything and name in self._values:
             return self._values[name]
         return self._raise_informative_attribute_error(name)
 
     def __setattr__(self, name, value):
         if name.startswith("_"):
             return super().__setattr__(name, value)
-        if self._parent._has_attribute(name):
+        if self._has_attribute(name):
             self._values[name] = getattr(self._parent, name).parse(value)
+            return
+        if self._accepts_anything:
+            self._values[name] = value
             return
         return self._raise_informative_attribute_error(name)
 

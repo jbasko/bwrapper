@@ -1,16 +1,28 @@
-import abc
 import json
 import logging
-from typing import Dict, Generator, List, Type, Union, get_type_hints
+from typing import Any, Dict, Generator, List, Type, Union
 from uuid import uuid4
 
 from bwrapper.boto import BotoMixin
 from bwrapper.log import LogMixin
+from bwrapper.type_hints_attrs import TypeHintsAttrs, _Attr
 
 log = logging.getLogger(__name__)
 
 
-class SqsMessage(abc.ABC):
+class _SqsMessageBase:
+    class MessageAttributes:
+        pass
+
+    class MessageBody:
+        pass
+
+    def __init_subclass__(cls, **kwargs):
+        TypeHintsAttrs.init_for(target_cls=cls, name="MessageAttributes")
+        TypeHintsAttrs.init_for(target_cls=cls, name="MessageBody")
+
+
+class SqsMessage(_SqsMessageBase):
     """
     Base class for custom SQS messages.
     An SQS message class defines the accepted format of the message.
@@ -26,9 +38,132 @@ class SqsMessage(abc.ABC):
     MessageAttributes can only be of primitive types.
     MessageBody can contain nested attributes (list, dict).
 
-    If a message class does not specify internal MessageBody or MessageAttributes classes,
-    it means it accepts anything in that particular section.
     """
+
+    class MessageAttributes:
+        sqs_message_type: str  # Internal attribute included in every message
+
+    def __init__(
+        self,
+        *,
+        receipt_handle: str = None,
+        queue: "SqsQueue" = None,
+        attributes: Dict = None,
+        body: Dict = None,
+    ):
+        """
+        By default, only attributes= and body= are validated against the schema.
+        Raw SQS message is validated only as far as it concerns known fields.
+        Unknown fields are set as given.
+        """
+
+        super().__init__()
+
+        self.receipt_handle = receipt_handle
+        self._raw: Dict = None
+
+        # Only set for received messages
+        self._queue: "SqsQueue" = queue
+
+        if attributes:
+            for k, v in attributes.items():
+                setattr(self.MessageAttributes, k, v)
+
+        if body:
+            for k, v in body.items():
+                setattr(self.MessageBody, k, v)
+
+        if not self.MessageAttributes.sqs_message_type:
+            self.MessageAttributes.sqs_message_type = self.__class__.__name__
+
+    @property
+    def _parsed_body(self) -> Dict:
+        if self._parsed_body_obj is None:
+            if self._raw_body:
+                self._parsed_body_obj = json.loads(self._raw_body)
+            else:
+                self._parsed_body_obj = {}
+        return self._parsed_body_obj
+
+    @property
+    def _parsed_attributes(self) -> Dict:
+        if self._parsed_attributes_obj is None:
+            parsed = {}
+            schema = self.MessageAttributes._schema
+            if schema is None:
+                for k, v_obj in self._raw_attributes.items():
+                    if v_obj["DataType"] == "String":
+                        parsed[k] = v_obj["StringValue"]
+                    else:
+                        parsed[k] = v_obj["BinaryValue"]
+            else:
+                for k, t in schema.items():
+                    if t not in self._message_attributes_types:
+                        raise RuntimeError(
+                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
+                        )
+                    if k in self._raw_attributes:
+                        value = self._raw_attributes[k][self._message_attributes_types[t]]
+                        parsed[k] = SqsMessage._parse_value(t, value)
+            self._parsed_attributes_obj = parsed
+        return self._parsed_attributes_obj
+
+    @classmethod
+    def from_sqs_dict(cls, sqs_dict: Dict, queue: "SqsQueue" = None) -> "SqsMessage":
+        instance = cls()
+        instance.receipt_handle = sqs_dict.get("ReceiptHandle")
+        instance._raw = sqs_dict.copy()
+        if sqs_dict.get("MessageAttributes"):
+            for k, v_dct in sqs_dict["MessageAttributes"].items():
+                raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
+                if k in instance.MessageAttributes:
+                    attr = instance.MessageAttributes[k]
+                    setattr(instance.MessageAttributes, attr.name, attr.parse(raw_value))
+                elif instance.MessageAttributes._accepts_anything:
+                    setattr(instance.MessageAttributes, k, raw_value)
+        if sqs_dict.get("MessageBody"):
+            instance.MessageBody._update(**json.loads(sqs_dict["MessageBody"]))
+        instance._queue = queue
+        return instance
+
+    def to_sqs_dict(self) -> Dict:
+        """
+        Generate message in the SQS format.
+        Note that the output of this is not acceptable by __init__ because boto
+        expects "MessageBody" when sending a message and provides "Body" when receiving a message.
+        """
+
+        # accepts_anything setting is ignored here -- unknown items aren't serialised.
+
+        attributes_dct = {}
+        for attr_name in self.MessageAttributes:
+            attr: _Attr = self.MessageAttributes[attr_name]
+            value = getattr(self.MessageAttributes, attr.name)
+            attributes_dct[attr.name] = self._serialise_attr(attr, value)
+
+        body_dct = {}
+        for attr_name in self.MessageBody:
+            attr: _Attr = self.MessageBody[attr_name]
+            value = getattr(self.MessageBody, attr.name)
+            body_dct[attr.name] = value
+
+        return {
+            "MessageAttributes": attributes_dct,
+            "MessageBody": json.dumps(body_dct, sort_keys=True),
+        }
+
+    def delete(self):
+        self._queue.delete_message(receipt_handle=self.receipt_handle)
+
+    def release(self):
+        self._queue.release_message(receipt_handle=self.receipt_handle)
+
+    def hold(self, timeout: int):
+        self._queue.hold_message(receipt_handle=self.receipt_handle, timeout=timeout)
+
+    @property
+    def raw(self) -> Dict:
+        return self._raw
 
     _message_attributes_types: Dict[Type, str] = {
         str: "StringValue",
@@ -83,205 +218,39 @@ class SqsMessage(abc.ABC):
             for i, v in enumerate(value):
                 SqsMessage._validate_value_type(f"{name}[{i}]", v)
 
-    class _BoundMessagePart:
-        _internal_attrs = []
-        _parsed_content_attr: str = None  # set in subclass
+    def _serialise_attr(self, attr: _Attr, value: Any) -> Dict:
+        s_type = "String"
+        if attr.type is bytes:
+            s_type = "Binary"
+        elif not issubclass(attr.type, (int, float, str)):
+            raise TypeError(
+                f"Unsupported type for {attr}: {attr.type}"
+            )
 
-        def __init__(self, schema, instance):
-            self._schema = schema
-            self._instance: SqsMessage = instance
-
-        def _has_attribute(self, name):
-            if self._schema is None:
-                return True
-            return name in self._schema or name in self._internal_attrs
-
-        def __getattr__(self, name):
-            if not self._has_attribute(name):
-                raise AttributeError(f"{self._instance.__class__.__name__!r} class does not have attribute {name!r}")
-            return getattr(self._instance, self._parsed_content_attr).get(name)
-
-        def __setattr__(self, name, value):
-            if name.startswith("_"):
-                return super().__setattr__(name, value)
-            if not self._has_attribute(name):
-                raise AttributeError(f"{self._instance.__class__.__name__} does not have attribute {name!r}")
-            SqsMessage._validate_value_type(name, value)
-            if self._schema:
-                value = SqsMessage._parse_value(self._schema.get(name), value)
-            getattr(self._instance, self._parsed_content_attr)[name] = value
-
-        def __repr__(self):
-            return f"<{self.__class__.__name__} {getattr(self._instance, self._parsed_content_attr)}>"
-
-    class _BoundMessageBody(_BoundMessagePart):
-        _parsed_content_attr = "_parsed_body"
-
-    class _BoundMessageAttributes(_BoundMessagePart):
-        _internal_attrs = ("sqs_message_type",)
-        _parsed_content_attr = "_parsed_attributes"
-
-    class _MessageBody:
-        def __init__(self, schema_type: Type = None):
-            self.schema = None
-            if schema_type:
-                self.schema = get_type_hints(schema_type)
-
-        def __get__(self, instance, owner):
-            if instance is None:
-                return self
-            if not hasattr(instance, "_body"):
-                setattr(instance, "_body", SqsMessage._BoundMessageBody(schema=self.schema, instance=instance))
-            return getattr(instance, "_body")
-
-    class _MessageAttributes:
-        def __init__(self, schema_type: Type):
-            self.schema = None
-            if schema_type:
-                self.schema = get_type_hints(schema_type)
-
-        def __get__(self, instance, owner):
-            if instance is None:
-                return self.schema
-            if not hasattr(instance, "_attributes"):
-                setattr(
-                    instance, "_attributes",
-                    SqsMessage._BoundMessageAttributes(schema=self.schema, instance=instance),
-                )
-            return getattr(instance, "_attributes")
-
-    def __init_subclass__(cls, **kwargs):
-        cls.MessageBody = SqsMessage._MessageBody(getattr(cls, "MessageBody", None))
-        cls.MessageAttributes = SqsMessage._MessageAttributes(getattr(cls, "MessageAttributes", None))
-
-    def __init__(
-        self,
-        raw_sqs_message=None,
-        receipt_handle: str = None,
-        queue: "SqsQueue" = None,
-        attributes: Dict = None,
-        body: Dict = None,
-    ):
-        """
-        By default, only attributes= and body= are validated against the schema.
-        Raw SQS message is validated only as far as it concerns known fields.
-        Unknown fields are set as given.
-        """
-
-        self.receipt_handle = receipt_handle
-        self._raw = raw_sqs_message
-        self._raw_body = None
-        self._raw_attributes = {}
-        if self._raw:
-            self._raw_body = self._raw["Body"]
-            self._raw_attributes = self._raw.get("MessageAttributes", None) or {}
-        self._parsed_body_obj = None
-        self._parsed_attributes_obj = None
-
-        # Only set for received messages
-        self._queue: "SqsQueue" = queue
-
-        if attributes:
-            for k, v in attributes.items():
-                setattr(self.MessageAttributes, k, v)
-
-        if body:
-            for k, v in body.items():
-                setattr(self.MessageBody, k, v)
-
-        if not self._raw:
-            setattr(self.MessageAttributes, "sqs_message_type", self.__class__.__name__)
-
-    @property
-    def _parsed_body(self) -> Dict:
-        if self._parsed_body_obj is None:
-            if self._raw_body:
-                self._parsed_body_obj = json.loads(self._raw_body)
-            else:
-                self._parsed_body_obj = {}
-        return self._parsed_body_obj
-
-    @property
-    def _parsed_attributes(self) -> Dict:
-        if self._parsed_attributes_obj is None:
-            parsed = {}
-            schema = self.MessageAttributes._schema
-            if schema is None:
-                for k, v_obj in self._raw_attributes.items():
-                    if v_obj["DataType"] == "String":
-                        parsed[k] = v_obj["StringValue"]
-                    else:
-                        parsed[k] = v_obj["BinaryValue"]
-            else:
-                for k, t in schema.items():
-                    if t not in self._message_attributes_types:
-                        raise RuntimeError(
-                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
-                        )
-                    if k in self._raw_attributes:
-                        value = self._raw_attributes[k][self._message_attributes_types[t]]
-                        parsed[k] = SqsMessage._parse_value(t, value)
-            self._parsed_attributes_obj = parsed
-        return self._parsed_attributes_obj
-
-    def to_sqs_dict(self) -> Dict:
-        """
-        Generate message in the SQS format.
-        Note that the output of this is not acceptable by __init__ because boto
-        expects "MessageBody" when sending a message and provides "Body" when receiving a message.
-        """
-
-        attributes = {
-            "sqs_message_type": {"DataType": "String", "StringValue": self.__class__.__name__},
-        }
-        if self.MessageAttributes._schema:
-            schema_items = self.MessageAttributes._schema.items()
+        if s_type == "Binary":
+            return {
+                "DataType": "Binary",
+                "BinaryValue": value,
+            }
         else:
-            schema_items = [(k, type(v)) for k, v in self._parsed_attributes.items()]
-
-        for k, t in schema_items:
-            if k not in self._parsed_attributes:
-                continue
-            if t not in self._message_attributes_types:
-                raise RuntimeError(
-                    f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
-                )
-            attributes[k] = {}
-            if t is str:
-                attributes[k]["DataType"] = "String"
-            elif t is bytes:
-                attributes[k]["DataType"] = "Binary"
-            elif t in (int, float):
-                attributes[k]["DataType"] = "String"
-                attributes[k]["StringValue"] = str(self._parsed_attributes[k])
-                continue
-
-            attributes[k][self._message_attributes_types[t]] = self._parsed_attributes[k]
-
-        return {
-            "MessageAttributes": attributes,
-            "MessageBody": json.dumps(self._parsed_body, sort_keys=True),
-        }
-
-    def delete(self):
-        self._queue.delete_message(receipt_handle=self.receipt_handle)
-
-    def release(self):
-        self._queue.release_message(receipt_handle=self.receipt_handle)
-
-    def hold(self, timeout: int):
-        self._queue.hold_message(receipt_handle=self.receipt_handle, timeout=timeout)
-
-    @property
-    def raw(self) -> Dict:
-        return self._raw
+            return {
+                "DataType": "String",
+                "StringValue": str(value),
+            }
 
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.to_sqs_dict()}>"
 
 
 class GenericSqsMessage(SqsMessage):
-    pass
+    """
+    Special message class that can be used to represent message with any attributes and body content.
+    """
+    class MessageBody:
+        accepts_anything = True
+
+    class MessageAttributes:
+        accepts_anything = True
 
 
 class SqsQueue(LogMixin, BotoMixin):
