@@ -13,7 +13,7 @@ are replaced during class initialisation so they can no longer be inherited from
 """
 
 
-from typing import Any, Type, get_type_hints, Dict
+from typing import Any, Dict, Type, get_type_hints
 
 
 class _Attr:
