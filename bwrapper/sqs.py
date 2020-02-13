@@ -179,7 +179,7 @@ class SqsMessage(_SqsMessageBase):
             }
 
     def __repr__(self):
-        return f"<{self.__class__.__name__} {self._raw or self.to_sqs_dict()}>"
+        return f"<{self.__class__.__name__} {str(self.receipt_handle)[:10]}...>"
 
 
 class GenericSqsMessage(SqsMessage):

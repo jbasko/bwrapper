@@ -14,6 +14,7 @@ Failure:
 """
 import time
 
+from bwrapper.sns import SnsMessage
 from bwrapper.sqs import GenericSqsMessage
 
 
@@ -37,4 +38,27 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
     of GenericSqsMessage).
     Message handlers won't be functional as message._queue is not passed to the sub-process.
     """
-    print(f"Got {message.extract_body()}")
+    body = message.extract_body()
+    attributes = message.extract_attributes()
+
+    if body.get("Type") == "Notification":
+        notification = SnsMessage.from_sns_dict(body)
+        print(f"Recognised SNS notification: {notification}")
+        print(f"\tTopic: {notification.topic_arn}")
+        print(f"\tSubject: {notification.subject}")
+        print(f"\tAttributes:")
+        for k, v in notification.extract_attributes().items():
+            print(f"\t\t{k}: {v}")
+        print(f"\tBody:")
+        for k, v in notification.extract_body().items():
+            print(f"\t\t{k}: {v}")
+        print(f"Finished\n")
+    else:
+        print(f"Starting to work on message {message.receipt_handle[:10]}...")
+        print(f"\tAttributes:")
+        for k, v in message.extract_attributes().items():
+            print(f"\t\t{k}: {v}")
+        print(f"\tBody:")
+        for k, v in message.extract_body().items():
+            print(f"\t\t{k}: {v}")
+        print(f"Finished\n")

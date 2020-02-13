@@ -24,6 +24,7 @@ def test_sns_message(MyMessage):
         subject="Ha",
         topic_arn="arn:topic",
         attributes={"x": "12", "y": "34"},
+        message_structure="json",
         body={"func": "do.something"},
     )
     assert msg.subject == "Ha"
@@ -31,7 +32,7 @@ def test_sns_message(MyMessage):
     assert msg.attributes.x == "12"
     assert msg.attributes.y == 34
 
-    assert msg.message_structure is None
+    assert msg.message_structure == "json"
     assert msg.message_attributes == {
         "x": {
             "DataType": "String",
@@ -47,6 +48,7 @@ def test_sns_message(MyMessage):
 
 def test_from_raw_sns_dict(MyMessage):
     msg = MyMessage.from_sns_dict({
+        "MessageStructure": "json",
         "Message": "{\"func\": \"do.something\"}",
         "TopicArn": "arn:topic",
         "Subject": "Ha",
