@@ -1,6 +1,7 @@
+import copy
 import json
 import logging
-from typing import Any, Dict, Generator, List, Type, Union
+from typing import Any, Dict, Generator, Sequence, Type, Union
 from uuid import uuid4
 
 from bwrapper.boto import BotoMixin
@@ -60,7 +61,9 @@ class SqsMessage(_SqsMessageBase):
         super().__init__()
 
         self.receipt_handle = receipt_handle
+
         self._raw: Dict = None
+        self._parsed_body: Dict = None
 
         # Only set for received messages
         self._queue: "SqsQueue" = queue
@@ -76,43 +79,11 @@ class SqsMessage(_SqsMessageBase):
         if not self.MessageAttributes.sqs_message_type:
             self.MessageAttributes.sqs_message_type = self.__class__.__name__
 
-    @property
-    def _parsed_body(self) -> Dict:
-        if self._parsed_body_obj is None:
-            if self._raw_body:
-                self._parsed_body_obj = json.loads(self._raw_body)
-            else:
-                self._parsed_body_obj = {}
-        return self._parsed_body_obj
-
-    @property
-    def _parsed_attributes(self) -> Dict:
-        if self._parsed_attributes_obj is None:
-            parsed = {}
-            schema = self.MessageAttributes._schema
-            if schema is None:
-                for k, v_obj in self._raw_attributes.items():
-                    if v_obj["DataType"] == "String":
-                        parsed[k] = v_obj["StringValue"]
-                    else:
-                        parsed[k] = v_obj["BinaryValue"]
-            else:
-                for k, t in schema.items():
-                    if t not in self._message_attributes_types:
-                        raise RuntimeError(
-                            f"Unsupported type in MessageAttributes schema of {self.__class__}: ({k!r}, {t})",
-                        )
-                    if k in self._raw_attributes:
-                        value = self._raw_attributes[k][self._message_attributes_types[t]]
-                        parsed[k] = SqsMessage._parse_value(t, value)
-            self._parsed_attributes_obj = parsed
-        return self._parsed_attributes_obj
-
     @classmethod
     def from_sqs_dict(cls, sqs_dict: Dict, queue: "SqsQueue" = None) -> "SqsMessage":
         instance = cls()
         instance.receipt_handle = sqs_dict.get("ReceiptHandle")
-        instance._raw = sqs_dict.copy()
+        instance._raw = copy.deepcopy(sqs_dict)
         if sqs_dict.get("MessageAttributes"):
             for k, v_dct in sqs_dict["MessageAttributes"].items():
                 raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
@@ -121,8 +92,9 @@ class SqsMessage(_SqsMessageBase):
                     setattr(instance.MessageAttributes, attr.name, attr.parse(raw_value))
                 elif instance.MessageAttributes._accepts_anything:
                     setattr(instance.MessageAttributes, k, raw_value)
-        if sqs_dict.get("MessageBody"):
-            instance.MessageBody._update(**json.loads(sqs_dict["MessageBody"]))
+        # For some stupid reason to send the message it is "MessageBody", yet in the received payload it is "Body".
+        if sqs_dict.get("Body"):
+            instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
         instance._queue = queue
         return instance
 
@@ -164,6 +136,12 @@ class SqsMessage(_SqsMessageBase):
     @property
     def raw(self) -> Dict:
         return self._raw
+
+    @property
+    def parsed_body(self) -> Dict:
+        if self._parsed_body is None and self._raw and self._raw.get("Body"):
+            self._parsed_body = json.loads(self._raw["Body"])
+        return self._parsed_body
 
     _message_attributes_types: Dict[Type, str] = {
         str: "StringValue",
@@ -239,7 +217,7 @@ class SqsMessage(_SqsMessageBase):
             }
 
     def __repr__(self):
-        return f"<{self.__class__.__name__} {self.to_sqs_dict()}>"
+        return f"<{self.__class__.__name__} {self._raw or self.to_sqs_dict()}>"
 
 
 class GenericSqsMessage(SqsMessage):
@@ -288,9 +266,10 @@ class SqsQueue(LogMixin, BotoMixin):
 
     def receive_messages(
         self,
-        message_cls: Union[Type[SqsMessage], List[Type[SqsMessage]]] = None,
+        message_cls: Union[Type[SqsMessage], Sequence[Type[SqsMessage]]] = None,
         delete=False,
         max_num_messages=10,
+        accept_all=False,
     ) -> Generator[SqsMessage, None, None]:
         """
         Receive multiple messages and yield them as instances of the specified
@@ -308,7 +287,7 @@ class SqsQueue(LogMixin, BotoMixin):
             message_classes = []
         message_types = {mc.__name__: mc for mc in message_classes}
 
-        self.log.info(f"Polling {self.url} for message types [{', '.join(message_types)}]")
+        self.log.info(f"Polling {self.url} for message types [{', '.join(message_types)}], accept_all={accept_all}")
         resp = self.sqs.receive_message(
             QueueUrl=self.url,
             MaxNumberOfMessages=max_num_messages,
@@ -339,7 +318,7 @@ class SqsQueue(LogMixin, BotoMixin):
                         f"Interpreting message of type {raw_message_type_name} as {GenericSqsMessage.__name__}"
                     )
                     message_cls = GenericSqsMessage
-            elif message_types:
+            elif message_types and not accept_all:
                 self.log.info(f"Releasing message of unspecified type")
                 self.release_message(receipt_handle=receipt_handle)
                 continue
@@ -347,9 +326,8 @@ class SqsQueue(LogMixin, BotoMixin):
                 self.log.debug(f"Interpreting message of unspecified type as {GenericSqsMessage.__name__}")
                 message_cls = GenericSqsMessage
 
-            message = message_cls(
-                raw_sqs_message=raw_message,
-                receipt_handle=raw_message["ReceiptHandle"],
+            message = message_cls.from_sqs_dict(
+                raw_message,
                 queue=self,
             )
             if delete:

@@ -14,6 +14,8 @@ Failure:
 """
 import time
 
+from bwrapper.sqs import GenericSqsMessage
+
 
 def say_hello(name: str = "world"):
     print(f"Hello, {name}")
@@ -27,3 +29,12 @@ def wait(seconds: int = 10):
 
 def fail():
     raise RuntimeError("I was asked to fail and so I do")
+
+
+def accept_all_handler(message: GenericSqsMessage, **kwargs):
+    """
+    A function that handles all unrecognised messages (passed through as instances
+    of GenericSqsMessage).
+    Message handlers won't be functional as message._queue is not passed to the sub-process.
+    """
+    print(f"Got {message.parsed_body}")

@@ -22,7 +22,7 @@ def test_all():
                 "StringValue": "123-456",
             },
         },
-        "MessageBody": json.dumps({
+        "Body": json.dumps({  # It is "Body" in the payload as returned by AWS, but it's MessageBody in the request.
             "uuid": "1234-1234-1234-1234",
             "request": {
                 "version": "JobRequest-1.0",
