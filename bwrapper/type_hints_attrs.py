@@ -13,7 +13,7 @@ are replaced during class initialisation so they can no longer be inherited from
 """
 
 
-from typing import Any, Dict, Type, get_type_hints
+from typing import Any, Collection, Dict, Type, get_type_hints
 
 
 class _Attr:
@@ -218,10 +218,20 @@ class _TypeHintsBoundAttrs:
             except AttributeError as e:
                 return self._raise_informative_attribute_error(k, e)
 
-    def _extract_values(self) -> Dict:
+    def _clear(self):
+        """
+        Clear any concrete values set. If fields have default values, they will be used next time
+        extract is requested or individual values are looked up.
+        """
+        self._values.clear()
+        self._other_values.clear()
+
+    def _extract_values(self, excluding: Collection[str] = None) -> Dict:
         dct = {}
+        excluding = excluding or ()
         for k in self:
-            dct[k] = getattr(self, k)
+            if k not in excluding:
+                dct[k] = getattr(self, k)
         return dct
 
     def _raise_informative_attribute_error(self, name, exception: Exception = None):

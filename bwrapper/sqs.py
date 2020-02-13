@@ -28,21 +28,17 @@ class SqsMessage(_SqsMessageBase):
     Base class for custom SQS messages.
     An SQS message class defines the accepted format of the message.
 
-    Example:
-
-        class Message(SqsMessage):
-            class MessageAttributes:
-                subject: str
-            class MessageBody:
-                body: str
-
     MessageAttributes can only be of primitive types.
-    MessageBody can contain nested attributes (list, dict).
+    MessageBody, if it's a JSON, can contain nested attributes (list, dict), but it can also be a plain string.
 
     """
 
     class MessageAttributes:
         sqs_message_type: str  # Internal attribute included in every message
+        sqs_body_type: str = "string"  # Set to "json" or "string"
+
+    class MessageBody:
+        sqs_body: str  # Field that is used if sqs_body_type is set to "string"
 
     def __init__(
         self,
@@ -50,7 +46,7 @@ class SqsMessage(_SqsMessageBase):
         receipt_handle: str = None,
         queue: "SqsQueue" = None,
         attributes: Dict = None,
-        body: Dict = None,
+        body: Union[Dict, str] = None,
     ):
         """
         By default, only attributes= and body= are validated against the schema.
@@ -71,9 +67,16 @@ class SqsMessage(_SqsMessageBase):
             for k, v in attributes.items():
                 setattr(self.MessageAttributes, k, v)
 
-        if body:
-            for k, v in body.items():
-                setattr(self.MessageBody, k, v)
+        if body is not None:
+            if isinstance(body, str):
+                self.MessageAttributes.sqs_body_type = "string"
+                self.MessageBody.sqs_body = body
+            elif isinstance(body, dict):
+                self.MessageAttributes.sqs_body_type = "json"
+                for k, v in body.items():
+                    setattr(self.MessageBody, k, v)
+            else:
+                raise TypeError(f"Expected body of type str or dict, got {type(body)}")
 
         if not self.MessageAttributes.sqs_message_type:
             self.MessageAttributes.sqs_message_type = self.__class__.__name__
@@ -91,9 +94,18 @@ class SqsMessage(_SqsMessageBase):
                     setattr(instance.MessageAttributes, attr.name, attr.parse(raw_value))
                 elif instance.MessageAttributes._accepts_anything:
                     setattr(instance.MessageAttributes, k, raw_value)
-        # For some stupid reason to send the message it is "MessageBody", yet in the received payload it is "Body".
+        # To send a message the boto3 parameter is called "MessageBody",
+        # but in the received messages it is "Body".
         if sqs_dict.get("Body"):
-            instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
+            if instance.MessageAttributes.sqs_body_type == "json":
+                instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
+            else:
+                try:
+                    instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
+                    instance.MessageAttributes.sqs_body_type = "json"
+                except json.JSONDecodeError:
+                    instance.MessageBody.sqs_body = sqs_dict["Body"]
+                    instance.MessageAttributes.sqs_body_type = "string"
         instance._queue = queue
         return instance
 
@@ -106,22 +118,22 @@ class SqsMessage(_SqsMessageBase):
 
         # accepts_anything setting is ignored here -- unknown items aren't serialised.
 
-        attributes_dct = {}
+        dct = {
+            "MessageAttributes": {},
+        }
+
         for attr_name in self.MessageAttributes:
             attr: _Attr = self.MessageAttributes[attr_name]
             value = getattr(self.MessageAttributes, attr.name)
-            attributes_dct[attr.name] = self._serialise_attr(attr, value)
+            dct["MessageAttributes"][attr.name] = self._serialise_attr(attr, value)
 
-        body_dct = {}
-        for attr_name in self.MessageBody:
-            attr: _Attr = self.MessageBody[attr_name]
-            value = getattr(self.MessageBody, attr.name)
-            body_dct[attr.name] = value
+        if self.MessageAttributes.sqs_body_type == "json":
+            dct["MessageBody"] = json.dumps(self.MessageBody._extract_values(excluding=["sqs_body"]), sort_keys=True)
+        else:
+            if self.MessageBody.sqs_body:
+                dct["MessageBody"] = self.MessageBody.sqs_body
 
-        return {
-            "MessageAttributes": attributes_dct,
-            "MessageBody": json.dumps(body_dct, sort_keys=True),
-        }
+        return dct
 
     def delete(self):
         self._queue.delete_message(receipt_handle=self.receipt_handle)
@@ -136,11 +148,33 @@ class SqsMessage(_SqsMessageBase):
     def raw(self) -> Dict:
         return self._raw
 
+    @property
+    def body(self) -> Union[Dict, str]:
+        if self.MessageAttributes.sqs_body_type == "json":
+            return self.extract_body()
+        else:
+            return self.MessageBody.sqs_body
+
+    @body.setter
+    def body(self, value: Union[Dict, str]):
+        if value is None:
+            self.MessageAttributes.sqs_body_type = None
+            self.MessageBody._clear()
+        elif isinstance(value, dict):
+            self.MessageAttributes.sqs_body_type = "json"
+            self.MessageBody._update(**value)
+        elif isinstance(value, str):
+            self.MessageAttributes.sqs_body_type = "string"
+            self.MessageBody.sqs_body = value
+        else:
+            raise TypeError(f"Expected value of type str or dict for body, got {type(value)}")
+
     def extract_body(self) -> Dict:
-        return self.MessageBody._extract_values()
+        assert self.MessageAttributes.sqs_body_type == "json"
+        return self.MessageBody._extract_values(excluding=["sqs_body"])
 
     def extract_attributes(self) -> Dict:
-        return self.MessageAttributes._extract_values()
+        return self.MessageAttributes._extract_values(excluding=["sqs_message_type", "sqs_body_type"])
 
     @classmethod
     def _parse_value(cls, value_type, value):

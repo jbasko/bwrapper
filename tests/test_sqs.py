@@ -42,6 +42,10 @@ def test_all():
             "DataType": "String",
             "StringValue": "JobMessage",
         },
+        "sqs_body_type": {
+            "DataType": "String",
+            "StringValue": "json",
+        },
         "job_id": {
             "DataType": "String",
             "StringValue": "123-456",
@@ -65,6 +69,10 @@ def test_all():
 
     sqs_dict = job.to_sqs_dict()
     assert sqs_dict["MessageAttributes"] == {
+        "sqs_body_type": {
+            "DataType": "String",
+            "StringValue": "json",
+        },
         "sqs_message_type": {
             "DataType": "String",
             "StringValue": "JobMessage",
@@ -178,19 +186,21 @@ def test_generic_sqs_message_with_unknown_fields_doesnt_raise_exception():
     }
 
     message = Message.from_sqs_dict(raw)
+    assert message.MessageAttributes.sqs_body_type == "json"
     assert message.MessageAttributes.message == "Hello"
     assert message.MessageAttributes.name == "world"
 
     dct = message.to_sqs_dict()
     assert dct["MessageAttributes"] == {
         "sqs_message_type": {"StringValue": "Message", "DataType": "String"},
+        "sqs_body_type": {"StringValue": "json", "DataType": "String"},
         "message": {"StringValue": "Hello", "DataType": "String"},
         "name": {"StringValue": "world", "DataType": "String"}
     }
+    assert dct["MessageBody"] == "{}"
 
     assert message.extract_body() == {}
     assert message.extract_attributes() == {
-        "sqs_message_type": "Message",
         "message": "Hello",
         "name": "world",
     }
@@ -236,3 +246,19 @@ def test_int_and_bool_message_attributes():
     message = Message.from_sqs_dict(raw)
     assert message.MessageAttributes.timeout == 123
     assert message.MessageAttributes.validate is True
+
+
+def test_plain_string_as_message_body():
+    message = SqsMessage(body="Hello world!")
+    assert message.MessageBody.sqs_body == "Hello world!"
+    assert message.body == "Hello world!"
+
+    message.body = "Bye world!"
+    assert message.body == "Bye world!"
+    assert message.MessageBody.sqs_body == "Bye world!"
+
+    assert message.to_sqs_dict()["MessageBody"] == "Bye world!"
+
+    message.body = None
+    assert message.body is None
+    assert "MessageBody" not in message.to_sqs_dict()

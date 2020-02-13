@@ -63,3 +63,14 @@ def test_from_raw_sns_dict(MyMessage):
     assert msg.body.func == "do.something"
     assert msg.attributes.x == "12"
     assert msg.attributes.y == 34
+
+
+def test_plain_body():
+    class PlainBodyMessage(SnsMessage):
+        pass
+
+    msg = PlainBodyMessage(message="Hello, world!")
+    assert msg.message == "Hello, world!"
+
+    with pytest.raises(AssertionError):
+        msg.extract_body()

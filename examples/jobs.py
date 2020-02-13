@@ -38,10 +38,12 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
     of GenericSqsMessage).
     Message handlers won't be functional as message._queue is not passed to the sub-process.
     """
-    body = message.extract_body()
+    body = message.body
     attributes = message.extract_attributes()
 
-    if body.get("Type") == "Notification":
+    if isinstance(body, dict) and body.get("Type") == "Notification":
+        print("Got keys: ", ", ".join(body))
+
         notification = SnsMessage.from_sns_dict(body)
         print(f"Recognised SNS notification: {notification}")
         print(f"\tTopic: {notification.topic_arn}")
@@ -50,15 +52,21 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
         for k, v in notification.extract_attributes().items():
             print(f"\t\t{k}: {v}")
         print(f"\tBody:")
-        for k, v in notification.extract_body().items():
-            print(f"\t\t{k}: {v}")
+        if notification.message_structure == "json":
+            for k, v in notification.extract_body().items():
+                print(f"\t\t{k}: {v}")
+        else:
+            print(f"\t\t({type(body)}) {body}")
         print(f"Finished\n")
     else:
         print(f"Starting to work on message {message.receipt_handle[:10]}...")
         print(f"\tAttributes:")
-        for k, v in message.extract_attributes().items():
+        for k, v in attributes.items():
             print(f"\t\t{k}: {v}")
         print(f"\tBody:")
-        for k, v in message.extract_body().items():
-            print(f"\t\t{k}: {v}")
+        if isinstance(body, dict):
+            for k, v in body.items():
+                print(f"\t\t{k}: {v}")
+        else:
+            print(f"\t\t{body}")
         print(f"Finished\n")

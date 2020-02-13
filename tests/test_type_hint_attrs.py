@@ -14,7 +14,7 @@ def test_internals():
 
     class Container:
         class X:
-            a: int
+            a: int = 2
             b: str
             c: float
 
@@ -35,13 +35,13 @@ def test_internals():
     assert not hasattr(Container.x, "d")
 
     assert isinstance(Container.x.a, _Attr)
-    assert Container.x.a.default is None
+    assert Container.x.a.default == 2
     assert Container.x.a.type_hint is int
     assert Container.x.a.name == "a"
 
     cont = Container()
     assert isinstance(cont.x, _TypeHintsBoundAttrs)
-    assert cont.x.a is None
+    assert cont.x.a == 2
 
     cont.x._parent._name == "x"
     cont.x._parent._attr_name == "x"
@@ -128,7 +128,7 @@ def X() -> Type:
     class X(Base):
         class attrs:
             a: int
-            b: str
+            b: str = "BBB"
             c: float
 
     return X
@@ -179,9 +179,28 @@ def test_iterate_over_all_unknown_attrs():
 def test_inherited_attrs(X):
     class Y(X):
         class attrs:
-            d: int
+            d: int = 10
 
-    y = Y(a="1", b="2", d="3")
+    assert Y.attrs.b.default == "BBB"
+
+    y = Y(a="1")
     assert y.attrs.a == 1
-    assert y.attrs.b == "2"
-    assert y.attrs.d == 3
+    assert y.attrs.b == "BBB"  # inherited default
+    assert y.attrs.d == 10
+
+
+def test_clear(X):
+    x = X(a="12", b="34", c="56")
+    assert x.attrs._extract_values() == {
+        "a": 12,
+        "b": "34",
+        "c": 56.0,
+    }
+
+    # Back to defaults
+    x.attrs._clear()
+    assert x.attrs._extract_values() == {
+        "a": None,
+        "b": "BBB",
+        "c": None,
+    }

@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--topic-arn")
     parser.add_argument("--subject")
+    parser.add_argument("--message")
     args = parser.parse_args()
 
     log_level = getattr(logging, args.log_level.upper())
@@ -38,6 +39,7 @@ def main():
     notifier.publish(SnsMessage(
         subject=args.subject,
         topic_arn=args.topic_arn,
+        message=args.message,
     ))
 
 

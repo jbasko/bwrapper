@@ -82,12 +82,14 @@ class SnsMessage(_SnsMessageBase):
             return self._str_message
 
     def extract_body(self) -> Dict:
+        assert self.message_structure == "json"
         return self.body._extract_values()
 
     def extract_attributes(self) -> Dict:
         return self.attributes._extract_values()
 
     def to_sns_dict(self) -> Dict:
+        assert self.message
         parts = [
             ("Message", self.message),
         ]
@@ -109,17 +111,29 @@ class SnsMessage(_SnsMessageBase):
             instance.subject = sns_dict["Subject"]
         if "TopicArn" in sns_dict:
             instance.topic_arn = sns_dict["TopicArn"]
-        if "Message" in sns_dict and sns_dict["Message"]:
-            if sns_dict.get("MessageStructure") == "json":
-                instance.body._update(**json.loads(sns_dict["Message"]))
-            else:
-                instance._str_message = sns_dict["Message"]
-        if "MessageAttributes" in sns_dict:
-            for k, v_dct in sns_dict["MessageAttributes"].items():
+
+        if "MessageStructure" in sns_dict:
+            instance.message_structure = sns_dict["MessageStructure"]
+
+        attributes_key = "MessageAttributes"
+        if "MessageAttributes" not in sns_dict and "Attributes" in sns_dict:
+            attributes_key = "Attributes"
+        if attributes_key in sns_dict:
+            for k, v_dct in sns_dict[attributes_key].items():
                 raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
                 if k in instance.attributes:
                     attr = instance.attributes[k]
                     setattr(instance.attributes, attr.name, attr.parse(raw_value))
                 elif instance.attributes._accepts_anything:
                     setattr(instance.attributes, k, raw_value)
+
+        body_key = "Message"
+        if "Message" not in sns_dict and "Body" in sns_dict:
+            body_key = "Body"
+        if body_key in sns_dict and sns_dict[body_key]:
+            if sns_dict.get("MessageStructure") == "json":
+                instance.body._update(**json.loads(sns_dict[body_key]))
+            else:
+                instance._str_message = sns_dict[body_key]
+
         return instance
