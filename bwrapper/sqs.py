@@ -229,9 +229,13 @@ class GenericSqsMessage(SqsMessage):
     class MessageAttributes:
         accepts_anything = True
 
+    @property
+    def is_sns_notification(self):
+        return self.MessageAttributes.sqs_body_type == "json" and self.body.get("Type") == "Notification"
+
     def extract_sns_notification(self):
         from bwrapper.sns import SnsNotification
-        if self.MessageAttributes.sqs_body_type == "json" and self.MessageBody.Type == "Notification":
+        if self.is_sns_notification:
             return SnsNotification.from_sns_dict(self.extract_body())
 
 
