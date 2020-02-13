@@ -41,8 +41,6 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
     attributes = message.extract_attributes()
 
     if isinstance(body, dict) and body.get("Type") == "Notification":
-        print("Got keys: ", ", ".join(body))
-
         notif = message.extract_sns_notification()
         print(f"Recognised SNS notification: {notif}")
         print(f"\tTopic: {notif.topic_arn}")

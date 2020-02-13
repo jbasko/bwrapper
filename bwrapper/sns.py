@@ -5,15 +5,15 @@ from bwrapper.type_hints_attrs import TypeHintsAttrs, _Attr
 
 
 class _SnsNotificationBase:
-    class attributes:
+    class Attributes:
         pass
 
-    class body:
+    class Body:
         pass
 
     def __init_subclass__(cls, **kwargs):
-        TypeHintsAttrs.init_for(target_cls=cls, name="attributes")
-        TypeHintsAttrs.init_for(target_cls=cls, name="body")
+        TypeHintsAttrs.init_for(target_cls=cls, name="Attributes")
+        TypeHintsAttrs.init_for(target_cls=cls, name="Body")
 
 
 class SnsNotification(_SnsNotificationBase):
@@ -40,10 +40,10 @@ class SnsNotification(_SnsNotificationBase):
         self._str_message = message
 
         if attributes:
-            self.attributes._update(**attributes)
+            self.Attributes._update(**attributes)
 
         if body:
-            self.body._update(**body)
+            self.Body._update(**body)
 
     @classmethod
     def _serialise_attr(cls, attr: _Attr, value):
@@ -63,9 +63,9 @@ class SnsNotification(_SnsNotificationBase):
         The serialised form of message attributes
         """
         dct = {}
-        for attr_name in self.attributes:
-            attr: _Attr = self.attributes[attr_name]
-            value = getattr(self.attributes, attr.name)
+        for attr_name in self.Attributes:
+            attr: _Attr = self.Attributes[attr_name]
+            value = getattr(self.Attributes, attr.name)
             dct[attr.name] = self._serialise_attr(attr, value)
         return dct
 
@@ -73,9 +73,9 @@ class SnsNotification(_SnsNotificationBase):
     def message(self) -> str:
         if self.message_structure == "json":
             dct = {}
-            for attr_name in self.body:
-                attr: _Attr = self.body[attr_name]
-                value = getattr(self.body, attr.name)
+            for attr_name in self.Body:
+                attr: _Attr = self.Body[attr_name]
+                value = getattr(self.Body, attr.name)
                 dct[attr.name] = value
             return json.dumps(dct, sort_keys=True)
         else:
@@ -83,10 +83,10 @@ class SnsNotification(_SnsNotificationBase):
 
     def extract_body(self) -> Dict:
         assert self.message_structure == "json"
-        return self.body._extract_values()
+        return self.Body._extract_values()
 
     def extract_attributes(self) -> Dict:
-        return self.attributes._extract_values()
+        return self.Attributes._extract_values()
 
     def to_sns_dict(self) -> Dict:
         assert self.message
@@ -121,18 +121,18 @@ class SnsNotification(_SnsNotificationBase):
         if attributes_key in sns_dict:
             for k, v_dct in sns_dict[attributes_key].items():
                 raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
-                if k in instance.attributes:
-                    attr = instance.attributes[k]
-                    setattr(instance.attributes, attr.name, attr.parse(raw_value))
-                elif instance.attributes._accepts_anything:
-                    setattr(instance.attributes, k, raw_value)
+                if k in instance.Attributes:
+                    attr = instance.Attributes[k]
+                    setattr(instance.Attributes, attr.name, attr.parse(raw_value))
+                elif instance.Attributes._accepts_anything:
+                    setattr(instance.Attributes, k, raw_value)
 
         body_key = "Message"
         if "Message" not in sns_dict and "Body" in sns_dict:
             body_key = "Body"
         if body_key in sns_dict and sns_dict[body_key]:
             if sns_dict.get("MessageStructure") == "json":
-                instance.body._update(**json.loads(sns_dict[body_key]))
+                instance.Body._update(**json.loads(sns_dict[body_key]))
             else:
                 instance._str_message = sns_dict[body_key]
 

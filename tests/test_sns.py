@@ -7,33 +7,33 @@ from bwrapper.sns import SnsNotification
 
 
 @pytest.fixture
-def MyMessage() -> Type[SnsNotification]:
+def MyNotification() -> Type[SnsNotification]:
     class MyNotification(SnsNotification):
-        class body:
+        class Body:
             func: str
 
-        class attributes:
+        class Attributes:
             x: str
             y: int
 
     return MyNotification
 
 
-def test_sns_message(MyMessage):
-    msg = MyMessage(
+def test_sns_notification(MyNotification):
+    notif = MyNotification(
         subject="Ha",
         topic_arn="arn:topic",
         attributes={"x": "12", "y": "34"},
         message_structure="json",
         body={"func": "do.something"},
     )
-    assert msg.subject == "Ha"
-    assert msg.topic_arn == "arn:topic"
-    assert msg.attributes.x == "12"
-    assert msg.attributes.y == 34
+    assert notif.subject == "Ha"
+    assert notif.topic_arn == "arn:topic"
+    assert notif.Attributes.x == "12"
+    assert notif.Attributes.y == 34
 
-    assert msg.message_structure == "json"
-    assert msg.message_attributes == {
+    assert notif.message_structure == "json"
+    assert notif.message_attributes == {
         "x": {
             "DataType": "String",
             "StringValue": "12",
@@ -43,11 +43,11 @@ def test_sns_message(MyMessage):
             "StringValue": "34",
         },
     }
-    assert msg.message == json.dumps({"func": "do.something"}, sort_keys=True)
+    assert notif.message == json.dumps({"func": "do.something"}, sort_keys=True)
 
 
-def test_from_raw_sns_dict(MyMessage):
-    msg = MyMessage.from_sns_dict({
+def test_from_raw_sns_dict(MyNotification):
+    notif = MyNotification.from_sns_dict({
         "MessageStructure": "json",
         "Message": "{\"func\": \"do.something\"}",
         "TopicArn": "arn:topic",
@@ -58,11 +58,11 @@ def test_from_raw_sns_dict(MyMessage):
         },
     })
 
-    assert msg.subject == "Ha"
-    assert msg.topic_arn == "arn:topic"
-    assert msg.body.func == "do.something"
-    assert msg.attributes.x == "12"
-    assert msg.attributes.y == 34
+    assert notif.subject == "Ha"
+    assert notif.topic_arn == "arn:topic"
+    assert notif.Body.func == "do.something"
+    assert notif.Attributes.x == "12"
+    assert notif.Attributes.y == 34
 
 
 def test_plain_body():
