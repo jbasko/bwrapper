@@ -37,4 +37,4 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
     of GenericSqsMessage).
     Message handlers won't be functional as message._queue is not passed to the sub-process.
     """
-    print(f"Got {message.parsed_body}")
+    print(f"Got {message.extract_body()}")

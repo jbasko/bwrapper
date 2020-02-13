@@ -63,7 +63,6 @@ class SqsMessage(_SqsMessageBase):
         self.receipt_handle = receipt_handle
 
         self._raw: Dict = None
-        self._parsed_body: Dict = None
 
         # Only set for received messages
         self._queue: "SqsQueue" = queue
@@ -137,11 +136,11 @@ class SqsMessage(_SqsMessageBase):
     def raw(self) -> Dict:
         return self._raw
 
-    @property
-    def parsed_body(self) -> Dict:
-        if self._parsed_body is None and self._raw and self._raw.get("Body"):
-            self._parsed_body = json.loads(self._raw["Body"])
-        return self._parsed_body
+    def extract_body(self) -> Dict:
+        return self.MessageBody._extract_values()
+
+    def extract_attributes(self) -> Dict:
+        return self.MessageAttributes._extract_values()
 
     @classmethod
     def _parse_value(cls, value_type, value):

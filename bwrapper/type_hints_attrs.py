@@ -13,7 +13,7 @@ are replaced during class initialisation so they can no longer be inherited from
 """
 
 
-from typing import Any, Type, get_type_hints
+from typing import Any, Type, get_type_hints, Dict
 
 
 class _Attr:
@@ -217,6 +217,12 @@ class _TypeHintsBoundAttrs:
                 setattr(self, k, v)
             except AttributeError as e:
                 return self._raise_informative_attribute_error(k, e)
+
+    def _extract_values(self) -> Dict:
+        dct = {}
+        for k in self:
+            dct[k] = getattr(self, k)
+        return dct
 
     def _raise_informative_attribute_error(self, name, exception: Exception = None):
         message = f"{self._instance.__class__.__name__}.{self._parent._attr_name} does not have attribute {name!r}"

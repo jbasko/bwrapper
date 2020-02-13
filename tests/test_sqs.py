@@ -188,6 +188,13 @@ def test_generic_sqs_message_with_unknown_fields_doesnt_raise_exception():
         "name": {"StringValue": "world", "DataType": "String"}
     }
 
+    assert message.extract_body() == {}
+    assert message.extract_attributes() == {
+        "sqs_message_type": "Message",
+        "message": "Hello",
+        "name": "world",
+    }
+
 
 def test_unknown_fields_passed_as_attributes_or_body_raises_exception():
     # See also test_unknown_fields_dont_raise_exception
