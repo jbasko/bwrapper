@@ -89,9 +89,11 @@ class SnsNotification(_SnsNotificationBase):
         return self.Attributes._extract_values()
 
     def to_sns_dict(self) -> Dict:
-        assert self.message
+        message = self.message
+        if not message:
+            raise ValueError("Non-empty Message is required")
         parts = [
-            ("Message", self.message),
+            ("Message", message),
         ]
         if self.message_structure:
             parts.append(("MessageStructure", self.message_structure))
@@ -137,3 +139,11 @@ class SnsNotification(_SnsNotificationBase):
                 instance._str_message = sns_dict[body_key]
 
         return instance
+
+
+class GenericSnsNotification(SnsNotification):
+    class Attributes:
+        accepts_anything = True
+
+    class Body:
+        accepts_anything = True
