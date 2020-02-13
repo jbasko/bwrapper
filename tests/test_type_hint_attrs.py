@@ -143,7 +143,37 @@ def test_init_for_without_definition(X):
 
 def test_iterate_over_attrs(X):
     x = X()
+    assert set(X.attrs) == {"a", "b", "c"}
+    assert isinstance(X.attrs["a"], _Attr)
+
     assert set(x.attrs) == {"a", "b", "c"}
+    assert isinstance(x.attrs["a"], _Attr)
+
+
+def test_iterate_over_all_unknown_attrs():
+    class B:
+        class attrs:
+            pass
+
+        def __init_subclass__(cls, **kwargs):
+            TypeHintsAttrs.init_for(target_cls=cls, name="attrs")
+
+    class C(B):
+        class attrs:
+            accepts_anything = True
+
+    c = C()
+    assert set(c.attrs) == set()
+
+    c.attrs.x = 123
+    assert set(c.attrs) == {"x"}
+
+    c.attrs.y = None
+    assert set(c.attrs) == {"x", "y"}
+
+    assert isinstance(c.attrs["x"], _Attr)
+    assert c.attrs["x"].name == "x"
+    assert c.attrs["y"].name == "y"
 
 
 def test_inherited_attrs(X):

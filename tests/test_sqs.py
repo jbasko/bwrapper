@@ -181,11 +181,11 @@ def test_generic_sqs_message_with_unknown_fields_doesnt_raise_exception():
     assert message.MessageAttributes.message == "Hello"
     assert message.MessageAttributes.name == "world"
 
-    # Serialised form does NOT contain the unknown fields.
     dct = message.to_sqs_dict()
     assert dct["MessageAttributes"] == {
         "sqs_message_type": {"StringValue": "Message", "DataType": "String"},
         "message": {"StringValue": "Hello", "DataType": "String"},
+        "name": {"StringValue": "world", "DataType": "String"}
     }
 
 

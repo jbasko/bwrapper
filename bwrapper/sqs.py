@@ -143,26 +143,6 @@ class SqsMessage(_SqsMessageBase):
             self._parsed_body = json.loads(self._raw["Body"])
         return self._parsed_body
 
-    _message_attributes_types: Dict[Type, str] = {
-        str: "StringValue",
-        int: "StringValue",
-        bool: "StringValue",
-        float: "StringValue",
-        bytes: "BinaryValue",
-    }
-
-    # Do not allow setting any attribute or body value to something
-    # whose type isn't in this list. Derived classes are no good
-    # because the values need to be JSON-serialisable.
-    _exact_valid_value_types = (
-        str,
-        dict,
-        list,
-        int,
-        bool,
-        float,
-    )
-
     @classmethod
     def _parse_value(cls, value_type, value):
         if value is None or value == "None":
@@ -178,23 +158,6 @@ class SqsMessage(_SqsMessageBase):
                 return False
             return bool(value)
         return value
-
-    @classmethod
-    def _validate_value_type(cls, name, value):
-        if value is None:
-            return
-
-        value_type = type(value)
-        if value_type not in SqsMessage._exact_valid_value_types:
-            raise TypeError((name, type(value), value))
-
-        if isinstance(value, dict):
-            for k, v in value.items():
-                SqsMessage._validate_value_type(f"{name}[{k!r}]", v)
-
-        elif isinstance(value, list):
-            for i, v in enumerate(value):
-                SqsMessage._validate_value_type(f"{name}[{i}]", v)
 
     def _serialise_attr(self, attr: _Attr, value: Any) -> Dict:
         s_type = "String"

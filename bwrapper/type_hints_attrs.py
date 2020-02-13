@@ -175,6 +175,7 @@ class _TypeHintsBoundAttrs:
         self._parent = parent
         self._instance = instance
         self._values = {}
+        self._other_values = {}
 
         if not self._parent._attr_name:
             raise RuntimeError(
@@ -195,8 +196,8 @@ class _TypeHintsBoundAttrs:
             if name not in self._values:
                 return getattr(self._parent, name).default
             return self._values[name]
-        if self._accepts_anything and name in self._values:
-            return self._values[name]
+        if self._accepts_anything and name in self._other_values:
+            return self._other_values[name]
         return self._raise_informative_attribute_error(name)
 
     def __setattr__(self, name, value):
@@ -206,7 +207,7 @@ class _TypeHintsBoundAttrs:
             self._values[name] = getattr(self._parent, name).parse(value)
             return
         if self._accepts_anything:
-            self._values[name] = value
+            self._other_values[name] = value
             return
         return self._raise_informative_attribute_error(name)
 
@@ -225,10 +226,23 @@ class _TypeHintsBoundAttrs:
             raise AttributeError(message)
 
     def __iter__(self):
-        return iter(self._parent._attrs)
+        """
+        Iterate both over known attrs and unknown ones
+        """
+        if self._accepts_anything:
+            return iter([*self._parent._attrs.keys(), *self._other_values.keys()])
+        else:
+            return iter(self._parent._attrs)
 
     def __getitem__(self, name) -> _Attr:
-        return self._parent._attrs[name]
+        if self._has_attribute(name):
+            return self._parent._attrs[name]
+        elif name in self._other_values:
+            return _Attr(name=name, type_hint=type(self._other_values[name]))
+        raise KeyError(name)
 
     def __len__(self):
-        return len(self._parent._attrs)
+        if self._accepts_anything:
+            return len(self._parent._attrs) + len(self._other_values.keys())
+        else:
+            return len(self._parent._attrs)
