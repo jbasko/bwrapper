@@ -97,3 +97,6 @@ ENV/
 
 # IDE settings
 .vscode/
+
+# bwrapper-specific
+bwrapper_scripts/

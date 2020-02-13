@@ -14,7 +14,6 @@ Failure:
 """
 import time
 
-from bwrapper.sns import SnsMessage
 from bwrapper.sqs import GenericSqsMessage
 
 
@@ -44,19 +43,19 @@ def accept_all_handler(message: GenericSqsMessage, **kwargs):
     if isinstance(body, dict) and body.get("Type") == "Notification":
         print("Got keys: ", ", ".join(body))
 
-        notification = SnsMessage.from_sns_dict(body)
-        print(f"Recognised SNS notification: {notification}")
-        print(f"\tTopic: {notification.topic_arn}")
-        print(f"\tSubject: {notification.subject}")
+        notif = message.extract_sns_notification()
+        print(f"Recognised SNS notification: {notif}")
+        print(f"\tTopic: {notif.topic_arn}")
+        print(f"\tSubject: {notif.subject}")
         print(f"\tAttributes:")
-        for k, v in notification.extract_attributes().items():
+        for k, v in notif.extract_attributes().items():
             print(f"\t\t{k}: {v}")
         print(f"\tBody:")
-        if notification.message_structure == "json":
-            for k, v in notification.extract_body().items():
+        if notif.message_structure == "json":
+            for k, v in notif.extract_body().items():
                 print(f"\t\t{k}: {v}")
         else:
-            print(f"\t\t({type(body)}) {body}")
+            print(f"\t\t{notif.message}")
         print(f"Finished\n")
     else:
         print(f"Starting to work on message {message.receipt_handle[:10]}...")

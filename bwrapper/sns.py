@@ -4,7 +4,7 @@ from typing import Dict
 from bwrapper.type_hints_attrs import TypeHintsAttrs, _Attr
 
 
-class _SnsMessageBase:
+class _SnsNotificationBase:
     class attributes:
         pass
 
@@ -16,7 +16,7 @@ class _SnsMessageBase:
         TypeHintsAttrs.init_for(target_cls=cls, name="body")
 
 
-class SnsMessage(_SnsMessageBase):
+class SnsNotification(_SnsNotificationBase):
     topic_arn: str
     subject: str
     message_structure: str
@@ -105,7 +105,7 @@ class SnsMessage(_SnsMessageBase):
         return dict(parts)
 
     @classmethod
-    def from_sns_dict(cls, sns_dict: Dict) -> "SnsMessage":
+    def from_sns_dict(cls, sns_dict: Dict) -> "SnsNotification":
         instance = cls()
         if "Subject" in sns_dict:
             instance.subject = sns_dict["Subject"]

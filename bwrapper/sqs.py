@@ -31,6 +31,9 @@ class SqsMessage(_SqsMessageBase):
     MessageAttributes can only be of primitive types.
     MessageBody, if it's a JSON, can contain nested attributes (list, dict), but it can also be a plain string.
 
+    SqsMessage does not allow arbitrary keys in MessageAttributes or MessageBody.
+    To allow arbitrary keys use GenericSqsMessage.
+
     """
 
     class MessageAttributes:
@@ -225,6 +228,11 @@ class GenericSqsMessage(SqsMessage):
 
     class MessageAttributes:
         accepts_anything = True
+
+    def extract_sns_notification(self):
+        from bwrapper.sns import SnsNotification
+        if self.MessageAttributes.sqs_body_type == "json" and self.MessageBody.Type == "Notification":
+            return SnsNotification.from_sns_dict(self.extract_body())
 
 
 class SqsQueue(LogMixin, BotoMixin):

@@ -3,12 +3,12 @@ from typing import Type
 
 import pytest
 
-from bwrapper.sns import SnsMessage
+from bwrapper.sns import SnsNotification
 
 
 @pytest.fixture
-def MyMessage() -> Type[SnsMessage]:
-    class MyMessage(SnsMessage):
+def MyMessage() -> Type[SnsNotification]:
+    class MyNotification(SnsNotification):
         class body:
             func: str
 
@@ -16,7 +16,7 @@ def MyMessage() -> Type[SnsMessage]:
             x: str
             y: int
 
-    return MyMessage
+    return MyNotification
 
 
 def test_sns_message(MyMessage):
@@ -66,10 +66,10 @@ def test_from_raw_sns_dict(MyMessage):
 
 
 def test_plain_body():
-    class PlainBodyMessage(SnsMessage):
+    class PlainBodyNotification(SnsNotification):
         pass
 
-    msg = PlainBodyMessage(message="Hello, world!")
+    msg = PlainBodyNotification(message="Hello, world!")
     assert msg.message == "Hello, world!"
 
     with pytest.raises(AssertionError):
