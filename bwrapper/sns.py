@@ -31,19 +31,26 @@ class SnsNotification(_SnsNotificationBase):
         attributes: Dict = None,
         body: Dict = None,
     ):
+        """
+        message is for string content, body is for JSON content.
+        """
         super().__init__()
 
         self.topic_arn = topic_arn
         self.subject = subject
         self.message_structure = message_structure
+        self._str_message = None
 
-        self._str_message = message
+        if body:
+            assert not message
+            self.message_structure = message_structure or "json"
+            self.Body._update(**body)
+        elif message:
+            assert self.message_structure != "json"
+            self._str_message = message
 
         if attributes:
             self.Attributes._update(**attributes)
-
-        if body:
-            self.Body._update(**body)
 
     @classmethod
     def _serialise_attr(cls, attr: _Attr, value):

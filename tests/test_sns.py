@@ -3,7 +3,7 @@ from typing import Type
 
 import pytest
 
-from bwrapper.sns import SnsNotification
+from bwrapper.sns import GenericSnsNotification, SnsNotification
 
 
 @pytest.fixture
@@ -74,3 +74,29 @@ def test_plain_body():
 
     with pytest.raises(AssertionError):
         msg.extract_body()
+
+
+def test_generic_sns_notification():
+    notif = GenericSnsNotification(
+        topic_arn="arn:topic",
+        subject="The Subject",
+        attributes={},
+        body={
+            "page": {
+                "id": 123,
+                "type": "BlogPage",
+            },
+        },
+    )
+    assert notif.Body.page == {
+        "id": 123,
+        "type": "BlogPage",
+    }
+    assert notif.message_structure == "json"
+
+    assert notif.to_sns_dict() == {
+        "Subject": "The Subject",
+        "TopicArn": "arn:topic",
+        "MessageStructure": "json",
+        "Message": json.dumps({"page": {"id": 123, "type": "BlogPage"}}, sort_keys=True),
+    }
