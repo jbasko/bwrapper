@@ -2,8 +2,8 @@ import argparse
 import logging
 
 from bwrapper.boto import BotoMixin
-from bwrapper.log import LogMixin
 from bwrapper.sns import SnsNotification
+from bwrapper.log import LogMixin
 
 
 class Notsy(BotoMixin, LogMixin):
@@ -14,9 +14,8 @@ class Notsy(BotoMixin, LogMixin):
     def __init__(self):
         super().__init__()
 
-    def publish(self, notification: SnsNotification):
-        self.sns.publish(**notification.to_sns_dict())
-        self.log.info(f"Published notification {notification}")
+    def publish(self, **params):
+        return self.sns.publish(**params)
 
 
 def main():
@@ -36,11 +35,11 @@ def main():
     logging.getLogger("urllib3").setLevel(logging.INFO)
 
     notifier = Notsy()
-    notifier.publish(SnsNotification(
+    notifier.publish(**SnsNotification(
+        message=args.message,
         subject=args.subject,
         topic_arn=args.topic_arn,
-        message=args.message,
-    ))
+    ).to_sns_dict())
 
 
 if __name__ == "__main__":

@@ -1,166 +1,92 @@
 import json
-from typing import Dict
-
-from bwrapper.type_hints_attrs import TypeHintsAttrs, _Attr
+from typing import Union, Dict, Any
 
 
-class _SnsNotificationBase:
-    class Attributes:
-        pass
-
-    class Body:
-        pass
-
-    def __init_subclass__(cls, **kwargs):
-        TypeHintsAttrs.init_for(target_cls=cls, name="Attributes")
-        TypeHintsAttrs.init_for(target_cls=cls, name="Body")
-
-
-class SnsNotification(_SnsNotificationBase):
-    topic_arn: str
-    subject: str
-    message_structure: str
-
-    class Body:
-        accepts_anything = True
-
+class SnsNotification:
     def __init__(
         self,
         *,
+        message: Union[Dict, str],
         topic_arn: str = None,
+        target_arn: str = None,
+        phone_number: str = None,
         subject: str = None,
-        message_structure: str = None,
-        message: str = None,
         attributes: Dict = None,
-        body: Dict = None,
     ):
-        """
-        message is for string content, body is for JSON content.
-        """
-        super().__init__()
-
+        self._message = None
         self.topic_arn = topic_arn
+        self.target_arn = target_arn
+        self.phone_number = phone_number
         self.subject = subject
-        self.message_structure = message_structure
-        self._str_message = None
+        self.attributes = attributes
 
-        if body:
-            assert not message
-            self.message_structure = message_structure or "json"
-            for k, v in body.items():
-                if v is None:
-                    # Silently discard invalid Nones
-                    continue
-                elif isinstance(v, dict):
-                    value = json.dumps(v, sort_keys=True)
-                elif isinstance(v, str):
-                    value = v
-                else:
-                    raise TypeError(f"Expected body[{k!r}] to be a str or dict, got {type(v)}")
-                setattr(self.Body, k, value)
-        elif message:
-            assert self.message_structure != "json"
-            self._str_message = message
-
-        if attributes:
-            self.Attributes._update(**attributes)
-
-    @classmethod
-    def _serialise_attr(cls, attr: _Attr, value):
-        s_type = "Number" if attr.type in (int, float) and isinstance(value, (int, float)) else "String"
-        if attr.type in (int, bool, float, str):  # None is serialised as "None"
-            s_value = str(value)
-        else:
-            raise ValueError(f"Unsupported value type {attr.type}")
-        return {
-            "DataType": s_type,
-            "StringValue": s_value,
-        }
-
-    @property
-    def message_attributes(self) -> Dict:
-        """
-        The serialised form of message attributes
-        """
-        dct = {}
-        for attr_name in self.Attributes:
-            attr: _Attr = self.Attributes[attr_name]
-            value = getattr(self.Attributes, attr.name)
-            dct[attr.name] = self._serialise_attr(attr, value)
-        return dct
-
-    @property
-    def message(self) -> str:
-        if self.message_structure == "json":
-            dct = {}
-            for attr_name in self.Body:
-                attr: _Attr = self.Body[attr_name]
-                value = getattr(self.Body, attr.name)
-                dct[attr.name] = value
-            return json.dumps(dct, sort_keys=True)
-        else:
-            return self._str_message
-
-    def extract_body(self) -> Dict:
-        assert self.message_structure == "json"
-        return self.Body._extract_values()
-
-    def extract_attributes(self) -> Dict:
-        return self.Attributes._extract_values()
+        self.message = message
 
     def to_sns_dict(self) -> Dict:
-        message = self.message
-        if not message:
-            raise ValueError("Non-empty Message is required")
-        parts = [
-            ("Message", message),
-        ]
-        if self.message_structure:
-            parts.append(("MessageStructure", self.message_structure))
-        if self.topic_arn:
-            parts.append(("TopicArn", self.topic_arn))
-        if self.subject:
-            parts.append(("Subject", self.subject))
-        if self.message_attributes:
-            parts.append(("MessageAttributes", self.message_attributes))
+        """
+        Convert to a dictionary whose contents can be passed as kwargs to
+        boto3 sns client's publish method.
+        """
 
-        return dict(parts)
+        is_json = isinstance(self._message, dict)
+        dct = {
+            "Message": json.dumps(self._message, sort_keys=True) if is_json else self._message,
+        }
+        if is_json:
+            dct["MessageStructure"] = "json"
+        if self.attributes:
+            dct["MessageAttributes"] = {
+                k: self._serialise_value(v)
+                for k, v in self.attributes.items()
+            }
+        if self.topic_arn:
+            dct["TopicArn"] = self.topic_arn
+        if self.target_arn:
+            dct["TargetArn"] = self.target_arn
+        if self.phone_number:
+            dct["PhoneNumber"] = self.phone_number
+        if self.subject:
+            dct["Subject"] = self.subject
+        return dct
 
     @classmethod
-    def from_sns_dict(cls, sns_dict: Dict) -> "SnsNotification":
-        instance = cls()
-        if "Subject" in sns_dict:
-            instance.subject = sns_dict["Subject"]
-        if "TopicArn" in sns_dict:
-            instance.topic_arn = sns_dict["TopicArn"]
+    def from_sns_via_sqs_dict(cls, dct) -> "SnsNotification":
+        """
+        Parse the dictionary that you get as MessageBody in SQS when forwarding
+        an SNS notification to SQS.
+        """
+        attributes = None
+        if "MessageAttributes" in dct:
+            attributes = {}
+            for k, v_def in dct["MessageAttributes"].items():
+                attributes[k] = v_def["Value"]  # Don't do any type conversions, not our job
+        return cls(
+            topic_arn=dct.get("TopicArn"),
+            subject=dct.get("Subject"),
+            message=dct["Message"],
+            attributes=attributes,
+        )
 
-        if "MessageStructure" in sns_dict:
-            instance.message_structure = sns_dict["MessageStructure"]
+    @property
+    def message(self) -> Union[Dict, str]:
+        return self._message
 
-        attributes_key = "MessageAttributes"
-        if "MessageAttributes" not in sns_dict and "Attributes" in sns_dict:
-            attributes_key = "Attributes"
-        if attributes_key in sns_dict:
-            for k, v_dct in sns_dict[attributes_key].items():
-                raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
-                if k in instance.Attributes:
-                    attr = instance.Attributes[k]
-                    setattr(instance.Attributes, attr.name, attr.parse(raw_value))
-                elif instance.Attributes._accepts_anything:
-                    setattr(instance.Attributes, k, raw_value)
+    @message.setter
+    def message(self, value: Union[Dict, str]):
+        if not isinstance(value, (str, Dict)):
+            raise TypeError(type(value))
+        self._message = value
 
-        body_key = "Message"
-        if "Message" not in sns_dict and "Body" in sns_dict:
-            body_key = "Body"
-        if body_key in sns_dict and sns_dict[body_key]:
-            if sns_dict.get("MessageStructure") == "json":
-                instance.Body._update(**json.loads(sns_dict[body_key]))
-            else:
-                instance._str_message = sns_dict[body_key]
+    @property
+    def message_structure(self):
+        if isinstance(self._message, dict):
+            return "json"
+        return None
 
-        return instance
-
-
-class GenericSnsNotification(SnsNotification):
-    class Attributes:
-        accepts_anything = True
+    def _serialise_value(self, value: Any):
+        v_type = type(value)
+        s_type = "Number" if v_type in (int, float) else "String"
+        return {
+            "DataType": s_type,
+            "StringValue": str(value),  # None -> "None", True -> "True", etc.
+        }
