@@ -22,6 +22,9 @@ class SnsNotification:
 
         self.message = message
 
+    def __repr__(self):
+        return f"<{self.__class__.__name__} {self.message}>"
+
     def to_sns_dict(self) -> Dict:
         """
         Convert to a dictionary whose contents can be passed as kwargs to

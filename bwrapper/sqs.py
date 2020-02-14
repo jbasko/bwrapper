@@ -35,6 +35,9 @@ class SqsMessage:
 
         self.raw: Dict = None
 
+    def __repr__(self):
+        return f"<{self.__class__.__name__} {self.raw or '?'}>"
+
     @property
     def queue(self) -> "SqsQueue":
         if self._queue is None and self._queue_url:
