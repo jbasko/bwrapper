@@ -2,8 +2,8 @@ import argparse
 import logging
 
 from bwrapper.boto import BotoMixin
-from bwrapper.sns import SnsNotification
 from bwrapper.log import LogMixin
+from bwrapper.sns import SnsNotification
 
 
 class Notsy(BotoMixin, LogMixin):

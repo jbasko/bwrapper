@@ -14,7 +14,7 @@ Failure:
 """
 import time
 
-from bwrapper.sqs import GenericSqsMessage
+from bwrapper.sqs import SqsMessage
 
 
 def say_hello(name: str = "world"):
@@ -31,39 +31,16 @@ def fail():
     raise RuntimeError("I was asked to fail and so I do")
 
 
-def accept_all_handler(message: GenericSqsMessage, **kwargs):
+def handle_job(message: SqsMessage, **kwargs):
     """
     A function that handles all unrecognised messages (passed through as instances
     of GenericSqsMessage).
-    Message handlers won't be functional as message._queue is not passed to the sub-process.
+    Message handlers won't be functional as message.queue is not passed to the sub-process.
     """
-    body = message.body
-    attributes = message.extract_attributes()
 
-    if isinstance(body, dict) and body.get("Type") == "Notification":
-        notif = message.extract_sns_notification(translate_attributes=True)
-        print(f"Recognised SNS notification: {notif}")
-        print(f"\tTopic: {notif.topic_arn}")
-        print(f"\tSubject: {notif.subject}")
-        print(f"\tAttributes:")
-        for k, v in notif.extract_attributes().items():
-            print(f"\t\t{k}: {v}")
-        print(f"\tBody:")
-        if notif.message_structure == "json":
-            for k, v in notif.extract_body().items():
-                print(f"\t\t{k}: {v}")
-        else:
-            print(f"\t\t{notif.message}")
-        print(f"Finished\n")
-    else:
-        print(f"Starting to work on message {message.receipt_handle[:10]}...")
-        print(f"\tAttributes:")
-        for k, v in attributes.items():
-            print(f"\t\t{k}: {v}")
-        print(f"\tBody:")
-        if isinstance(body, dict):
-            for k, v in body.items():
-                print(f"\t\t{k}: {v}")
-        else:
-            print(f"\t\t{body}")
-        print(f"Finished\n")
+    print("::: H A N D L I N G :::")
+    print(message.__dict__)
+
+    if message.is_sns_notification:
+        print("\tThis is a SNS notification")
+        print("\t\t", message.extract_sns_notification().__dict__)

@@ -5,14 +5,12 @@ Jobsy is a single-process worker or job scheduler (when called with --enqueue).
 import argparse
 import dataclasses
 import importlib
-import inspect
 import itertools
 import logging
 import multiprocessing
 import os
 import time
-from typing import Callable, Dict, Iterator, List, Tuple, Union, get_type_hints
-from uuid import uuid4
+from typing import Callable, Dict, Iterator, List, Tuple, Union
 
 from bwrapper.log import LogMixin
 from bwrapper.run_loop import RunLoopMixin
@@ -43,7 +41,7 @@ class Job:
     args: Tuple
     kwargs: Dict
     timeout: int
-    message: SqsMessage  # It is not necessarily a JobMessage because Jobsy can also work in accept-all mode.
+    message: SqsMessage
 
     def run_in_separate_process(self, log: logging.Logger):
         """
@@ -89,89 +87,18 @@ class Job:
             raise _JobFailed()
 
 
-def resolve_func_call(*, func_path, args, kwargs):
+def resolve_func_call(*, func_path):
     module_path, func_name = func_path.rsplit(".", 1)
     module = importlib.import_module(module_path)
     func = getattr(module, func_name)
-
-    type_hints = get_type_hints(func)
-    func_sig = inspect.signature(func)
-    discarded_kwargs = []
-    for k in list(kwargs):
-        if k not in func_sig.parameters:
-            discarded_kwargs.append(kwargs.pop(k))
-        if k in type_hints:
-            kwargs[k] = JobMessage._parse_value(type_hints[k], kwargs[k])
-
-    if discarded_kwargs:
-        log.warning(f"Discarded invalid kwargs ({', '.join(discarded_kwargs)}) for function {func_path}")
-
-    return func, args, kwargs
-
-
-class JobMessage(SqsMessage):
-    class MessageAttributes:
-        id: str
-        func: str
-        version: str
-        timeout: int
-
-    class MessageBody:
-        args: List
-        kwargs: Dict
-
-    def resolve_job(self) -> "Job":
-        args = self.MessageBody.args or ()
-        kwargs = self.MessageBody.kwargs or {}
-        func_path = self.MessageAttributes.func
-
-        func, args, kwargs = resolve_func_call(func_path=func_path, args=args, kwargs=kwargs)
-
-        timeout = DEFAULT_TIMEOUT
-        if self.MessageAttributes.timeout:
-            timeout = self.MessageAttributes.timeout
-
-        return Job(
-            message=self,
-            func=func,
-            args=args,
-            kwargs=kwargs,
-            timeout=timeout,
-        )
-
-    def __str__(self):
-        return f"{self.MessageAttributes.func!r} (id={self.MessageAttributes.id!r})"
-
-
-def new_job_message(
-    func: str,
-    args: List = None,
-    kwargs: Dict = None,
-    timeout: int = None,
-    version="1.0",
-) -> JobMessage:
-    return JobMessage(
-        attributes={
-            "id": str(uuid4()),
-            "func": func,
-            "version": version,
-            "timeout": timeout,
-        },
-        body={
-            "args": args or [],
-            "kwargs": kwargs or {},
-        }
-    )
+    assert callable(func)
+    return func
 
 
 class Jobsy(LogMixin, RunLoopMixin):
     """
     A primitive, single-worker job runner where jobs are coming from one or more SQS queues
     """
-
-    message_classes = (
-        JobMessage,
-    )
 
     # What is the longest we will wait before checking again that the process executing the function is still alive.
     _max_process_check_interval = 30
@@ -182,7 +109,7 @@ class Jobsy(LogMixin, RunLoopMixin):
         same_process: bool = False,
         max_iterations: int = None,
         job_failed_callback: Callable = None,
-        accept_all_handler_path: str = None,
+        job_handler_path: str = None,
         default_timeout: int = None,
     ):
         super().__init__()
@@ -190,9 +117,9 @@ class Jobsy(LogMixin, RunLoopMixin):
         self.job_failed_callback = job_failed_callback
         self._same_process = same_process
         self._queues_generator: Iterator[SqsQueue] = itertools.cycle(self.queues)
-        self.accept_all_handler = None
-        if accept_all_handler_path:
-            self.accept_all_handler, _, _ = resolve_func_call(func_path=accept_all_handler_path, args=(), kwargs={})
+        self.job_handler = None
+        if job_handler_path:
+            self.job_handler = resolve_func_call(func_path=job_handler_path)
         if max_iterations:
             self.run_loop.max_iterations = max_iterations
         self.default_timeout = default_timeout or DEFAULT_TIMEOUT
@@ -208,7 +135,7 @@ class Jobsy(LogMixin, RunLoopMixin):
             queue = next(self._queues_generator)
 
             m: SqsMessage
-            for m in queue.receive_messages(message_cls=self.message_classes, accept_all=bool(self.accept_all_handler)):
+            for m in queue.receive_messages():
                 if message is None:
                     message = m
                 else:
@@ -223,19 +150,18 @@ class Jobsy(LogMixin, RunLoopMixin):
 
         self.log.info(f"Received {message}: {message.raw}")
 
-        if isinstance(message, JobMessage):
-            job = message.resolve_job()
-        else:
-            job = Job(
-                func=self.accept_all_handler,
-                args=(),
-                kwargs={
-                    # Pass a copy based on the raw message. Queue object must not be passed as part of the message.
-                    "message": message.__class__.from_sqs_dict(message.raw.copy())
-                },
-                timeout=self.default_timeout,
-                message=message,
-            )
+        message_copy = message.copy()
+        message_copy.queue_url = message.queue_url
+        job = Job(
+            func=self.job_handler,
+            args=(),
+            kwargs={
+                # Pass a copy based on the raw message. Queue object must not be passed as part of the message.
+                "message": message_copy,
+            },
+            timeout=self.default_timeout,
+            message=message,
+        )
 
         # Ensure that we hold on to the message for at least as long as the interval
         # between checking on progress
@@ -272,10 +198,6 @@ class Jobsy(LogMixin, RunLoopMixin):
 def main():
     parser = argparse.ArgumentParser(prog="python -m bwrapper.jobsy", description=__doc__)
     parser.add_argument("--queue-url", action="append", dest="queue_urls")
-    parser.add_argument("--enqueue")
-    parser.add_argument("--args", help="args in arg1,arg2,arg3 format")
-    parser.add_argument("--kwargs", help="kwargs in key1:value1,key2:value2 format")
-    parser.add_argument("--timeout", type=int)
     parser.add_argument(
         "--same-process", action="store_true",
         help="[worker] Run jobs in the same process (timeouts not supported)",
@@ -286,12 +208,8 @@ def main():
         help="[worker] Maximum number of iterations to run the worker before exiting",
     )
     parser.add_argument(
-        "--accept-all-handler",
-        help=(
-            "[worker] By default, the worker ignores all messages that do not follow JobMessage format. "
-            "Set this to the path of a function that accepts messages of type GenericSqsMessage and "
-            "executes them."
-        )
+        "--handler-path",
+        help="'module.function' path to the function that handles messages",
     )
 
     args = parser.parse_args()
@@ -310,26 +228,14 @@ def main():
     else:
         queues = [SqsQueue(url=url) for url in args.queue_urls]
 
-    if args.enqueue:
-        params = {}
-        if args.args:
-            params["args"] = args.args.split(",")
-        if args.kwargs:
-            params["kwargs"] = dict(x.split(":") for x in args.kwargs.split(","))
-        if args.timeout:
-            params["timeout"] = args.timeout
-        for q in queues:
-            q.send_message(new_job_message(func=args.enqueue, **params))
-
-    else:
-        jobsy = Jobsy(
-            queues,
-            same_process=args.same_process,
-            max_iterations=args.max_iterations,
-            accept_all_handler_path=args.accept_all_handler,
-        )
-        jobsy.log.setLevel(log_level)
-        jobsy.run()
+    jobsy = Jobsy(
+        queues,
+        same_process=args.same_process,
+        max_iterations=args.max_iterations,
+        job_handler_path=args.handler_path,
+    )
+    jobsy.log.setLevel(log_level)
+    jobsy.run()
 
 
 if __name__ == "__main__":

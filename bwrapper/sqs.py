@@ -1,251 +1,139 @@
 import copy
 import json
 import logging
-from typing import Any, Dict, Generator, Sequence, Type, Union
-from uuid import uuid4
+from typing import Any, Dict, Generator, Union
 
 from bwrapper.boto import BotoMixin
 from bwrapper.log import LogMixin
-from bwrapper.type_hints_attrs import TypeHintsAttrs, _Attr
 
 log = logging.getLogger(__name__)
 
 
-class _SqsMessageBase:
-    class MessageAttributes:
-        pass
-
-    class MessageBody:
-        pass
-
-    def __init_subclass__(cls, **kwargs):
-        TypeHintsAttrs.init_for(target_cls=cls, name="MessageAttributes")
-        TypeHintsAttrs.init_for(target_cls=cls, name="MessageBody")
-
-
-class SqsMessage(_SqsMessageBase):
-    """
-    Base class for custom SQS messages.
-    An SQS message class defines the accepted format of the message.
-
-    MessageAttributes can only be of primitive types.
-    MessageBody, if it's a JSON, can contain nested attributes (list, dict), but it can also be a plain string.
-
-    SqsMessage does not allow arbitrary keys in MessageAttributes or MessageBody.
-    To allow arbitrary keys use GenericSqsMessage.
-
-    """
-
-    class MessageAttributes:
-        sqs_message_type: str  # Internal attribute included in every message
-        sqs_body_type: str = "string"  # Set to "json" or "string"
-
-    class MessageBody:
-        sqs_body: str  # Field that is used if sqs_body_type is set to "string"
-
+class SqsMessage:
     def __init__(
         self,
         *,
-        receipt_handle: str = None,
         queue: "SqsQueue" = None,
+        queue_url: str = None,
+        body: Union[str, Dict] = None,
+        delay_seconds: int = None,
         attributes: Dict = None,
-        body: Union[Dict, str] = None,
+        system_attributes: Dict = None,
+        deduplication_id: str = None,
+        group_id: str = None,
+        receipt_handle: str = None,
     ):
-        """
-        By default, only attributes= and body= are validated against the schema.
-        Raw SQS message is validated only as far as it concerns known fields.
-        Unknown fields are set as given.
-        """
-
-        super().__init__()
-
+        self._queue = queue
+        self._queue_url = queue_url
+        self.body = body
+        self.delay_seconds = delay_seconds
+        self.attributes = attributes
+        self.system_attributes = system_attributes
+        self.deduplication_id = deduplication_id
+        self.group_id = group_id
         self.receipt_handle = receipt_handle
 
-        self._raw: Dict = None
+        self.raw: Dict = None
 
-        # Only set for received messages
-        self._queue: "SqsQueue" = queue
+    @property
+    def queue(self) -> "SqsQueue":
+        if self._queue is None and self._queue_url:
+            self._queue = SqsQueue(self._queue_url)
+        return self._queue
 
+    @property
+    def queue_url(self) -> str:
+        if self.queue:
+            return self.queue.url
+
+    @queue_url.setter
+    def queue_url(self, value: str):
+        if self.queue:
+            self._queue = None
+        self._queue_url = value
+
+    def to_sqs_dict(self, **overrides) -> Dict:
+        dct = {}
+
+        attributes = overrides.pop("attributes", None) or self.attributes
+        system_attributes = overrides.pop("system_attributes", None) or self.system_attributes
+
+        dct["QueueUrl"] = self.queue_url
+        dct["MessageBody"] = self.body
+        if self.delay_seconds is not None:
+            dct["DelaySeconds"] = self.delay_seconds
         if attributes:
-            for k, v in attributes.items():
-                setattr(self.MessageAttributes, k, v)
+            dct["MessageAttributes"] = {
+                k: self._serialise_value(v)
+                for k, v in attributes.items()
+            }
+        if system_attributes:
+            dct["MessageSystemAttributes"] = {
+                k: self._serialise_value(v)
+                for k, v in system_attributes.items()
+            }
+        if self.deduplication_id:
+            dct["MessageDeduplicationId"] = self.deduplication_id
+        if self.group_id:
+            dct["MessageGroupId"] = self.group_id
 
-        if body is not None:
-            if isinstance(body, str):
-                self.MessageAttributes.sqs_body_type = "string"
-                self.MessageBody.sqs_body = body
-            elif isinstance(body, dict):
-                self.MessageAttributes.sqs_body_type = "json"
-                for k, v in body.items():
-                    setattr(self.MessageBody, k, v)
-            else:
-                raise TypeError(f"Expected body of type str or dict, got {type(body)}")
-
-        if not self.MessageAttributes.sqs_message_type:
-            self.MessageAttributes.sqs_message_type = self.__class__.__name__
-
-    @classmethod
-    def from_sqs_dict(cls, sqs_dict: Dict, queue: "SqsQueue" = None) -> "SqsMessage":
-        instance = cls()
-        instance.receipt_handle = sqs_dict.get("ReceiptHandle")
-        instance._raw = copy.deepcopy(sqs_dict)
-        if sqs_dict.get("MessageAttributes"):
-            for k, v_dct in sqs_dict["MessageAttributes"].items():
-                raw_value = v_dct.get("StringValue", v_dct.get("BinaryValue"))
-                if k in instance.MessageAttributes:
-                    attr = instance.MessageAttributes[k]
-                    setattr(instance.MessageAttributes, attr.name, attr.parse(raw_value))
-                elif instance.MessageAttributes._accepts_anything:
-                    setattr(instance.MessageAttributes, k, raw_value)
-        # To send a message the boto3 parameter is called "MessageBody",
-        # but in the received messages it is "Body".
-        if sqs_dict.get("Body"):
-            if instance.MessageAttributes.sqs_body_type == "json":
-                instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
-            else:
-                try:
-                    instance.MessageBody._update(**json.loads(sqs_dict["Body"]))
-                    instance.MessageAttributes.sqs_body_type = "json"
-                except json.JSONDecodeError:
-                    instance.MessageBody.sqs_body = sqs_dict["Body"]
-                    instance.MessageAttributes.sqs_body_type = "string"
-        instance._queue = queue
-        return instance
-
-    def to_sqs_dict(self) -> Dict:
-        """
-        Generate message in the SQS format.
-        Note that the output of this is not acceptable by __init__ because boto
-        expects "MessageBody" when sending a message and provides "Body" when receiving a message.
-        """
-
-        # accepts_anything setting is ignored here -- unknown items aren't serialised.
-
-        dct = {
-            "MessageAttributes": {},
-        }
-
-        for attr_name in self.MessageAttributes:
-            attr: _Attr = self.MessageAttributes[attr_name]
-            value = getattr(self.MessageAttributes, attr.name)
-            dct["MessageAttributes"][attr.name] = self._serialise_attr(attr, value)
-
-        if self.MessageAttributes.sqs_body_type == "json":
-            dct["MessageBody"] = json.dumps(self.MessageBody._extract_values(excluding=["sqs_body"]), sort_keys=True)
-        else:
-            if self.MessageBody.sqs_body:
-                dct["MessageBody"] = self.MessageBody.sqs_body
-
+        dct.update(overrides)
         return dct
 
-    def delete(self):
-        self._queue.delete_message(receipt_handle=self.receipt_handle)
-
-    def release(self):
-        self._queue.release_message(receipt_handle=self.receipt_handle)
-
-    def hold(self, timeout: int):
-        self._queue.hold_message(receipt_handle=self.receipt_handle, timeout=timeout)
-
-    @property
-    def raw(self) -> Dict:
-        return self._raw
-
-    @property
-    def body(self) -> Union[Dict, str]:
-        if self.MessageAttributes.sqs_body_type == "json":
-            return self.extract_body()
-        else:
-            return self.MessageBody.sqs_body
-
-    @body.setter
-    def body(self, value: Union[Dict, str]):
-        if value is None:
-            self.MessageAttributes.sqs_body_type = None
-            self.MessageBody._clear()
-        elif isinstance(value, dict):
-            self.MessageAttributes.sqs_body_type = "json"
-            self.MessageBody._update(**value)
-        elif isinstance(value, str):
-            self.MessageAttributes.sqs_body_type = "string"
-            self.MessageBody.sqs_body = value
-        else:
-            raise TypeError(f"Expected value of type str or dict for body, got {type(value)}")
-
-    def extract_body(self) -> Dict:
-        assert self.MessageAttributes.sqs_body_type == "json"
-        return self.MessageBody._extract_values(excluding=["sqs_body"])
-
-    def extract_attributes(self) -> Dict:
-        return self.MessageAttributes._extract_values(excluding=["sqs_message_type", "sqs_body_type"])
+    def _serialise_value(self, value: Any) -> Dict:
+        v_type = type(value)
+        s_type = "Number" if v_type in (int, float) else "String"
+        return {
+            "DataType": s_type,
+            "StringValue": str(value),  # None -> "None", True -> "True", etc.
+        }
 
     @classmethod
-    def _parse_value(cls, value_type, value):
-        if value is None or value == "None":
-            return None
-        if value_type in (int, float, str):
-            return value_type(value)
-        if value_type is bool:
-            if isinstance(value, bool):
-                return value
-            if value in ("True", "true", "yes", "y", "1"):
-                return True
-            elif value in ("False", "false", "no", "n", "0"):
-                return False
-            return bool(value)
-        return value
+    def from_sqs_dict(cls, dct: Dict, *, queue: "SqsQueue" = None) -> "SqsMessage":
 
-    def _serialise_attr(self, attr: _Attr, value: Any) -> Dict:
-        s_type = "String"
-        if attr.type is bytes:
-            s_type = "Binary"
-        elif not issubclass(attr.type, (int, float, str)):
-            raise TypeError(
-                f"Unsupported type for {attr}: {attr.type}"
-            )
+        attributes = None
+        raw_attributes = dct.get("MessageAttributes", None)
+        if raw_attributes:
+            attributes = {}
+            for k, v_def in raw_attributes.items():
+                attributes[k] = v_def["StringValue"]  # Don't do any type conversions, it's not our job
 
-        if s_type == "Binary":
-            return {
-                "DataType": "Binary",
-                "BinaryValue": value,
-            }
-        else:
-            return {
-                "DataType": "String",
-                "StringValue": str(value),
-            }
+        raw_body = dct.get("Body")
+        try:
+            body = json.loads(raw_body)
+        except json.JSONDecodeError:
+            body = raw_body
 
-    def __repr__(self):
-        return f"<{self.__class__.__name__} {str(self.receipt_handle)[:10]}...>"
+        instance = cls(
+            queue=queue,
+            body=body,
+            attributes=attributes,
+            receipt_handle=dct.get("ReceiptHandle"),
+        )
+        instance.raw = copy.deepcopy(dct)
+        return instance
 
+    def copy(self) -> "SqsMessage":
+        assert self.raw
+        return self.__class__.from_sqs_dict(self.raw)
 
-class GenericSqsMessage(SqsMessage):
-    """
-    Special message class that can be used to represent message with any attributes and body content.
-    """
-    class MessageBody:
-        accepts_anything = True
+    def hold(self, timeout: int):
+        self.queue.hold_message(self, timeout=timeout)
 
-    class MessageAttributes:
-        accepts_anything = True
+    def delete(self):
+        self.queue.delete_message(self)
+
+    def release(self):
+        self.queue.release_message(self)
 
     @property
     def is_sns_notification(self):
-        return self.MessageAttributes.sqs_body_type == "json" and self.body.get("Type") == "Notification"
+        return isinstance(self.body, dict) and self.body.get("Type") == "Notification"
 
-    def extract_sns_notification(self, translate_attributes=False):
-        """
-        Returns an instance of GenericSnsNotification which accepts any MessageAttributes.
-        """
-        if not self.is_sns_notification:
-            return
-
-        from bwrapper.sns import GenericSnsNotification
-        body = self.extract_body()
-        notif = GenericSnsNotification.from_sns_dict(body)
-        if translate_attributes:
-            notif.Attributes._update(**self.extract_attributes())
-        return notif
+    def extract_sns_notification(self):
+        from bwrapper.sns import SnsNotification
+        assert self.is_sns_notification
+        return SnsNotification.from_sns_via_sqs_dict(self.body)
 
 
 class SqsQueue(LogMixin, BotoMixin):
@@ -258,53 +146,30 @@ class SqsQueue(LogMixin, BotoMixin):
         return self.url.endswith(".fifo")
 
     def send_message(self, message: SqsMessage):
-        self.log.info(f"Sending message to {self.url}")
-        params = dict(
-            QueueUrl=self.url,
-            **message.to_sqs_dict(),
-        )
-        if self.is_fifo and "MessageGroupId" not in params:
-            params["MessageGroupId"] = str(uuid4())
+        self.log.info(f"Sending {message} to {self.url}")
         try:
-            self.sqs.send_message(**params)
+            self.sqs.send_message(**message.to_sqs_dict(QueueUrl=self.url))
         except Exception:
             self.log.error(f"Sending message {message} failed:")
             raise
         else:
             self.log.info("Message sent")
 
-    def receive_message(self, message_cls: Type[SqsMessage], delete=False) -> SqsMessage:
+    def receive_message(self, delete=False) -> SqsMessage:
         """
-        Receive a single message and create an instance of the specified SqsMessage sub-class.
         Returns None if no messages were seen.
         """
-        for message in self.receive_messages(message_cls, delete=delete, max_num_messages=1):
+        for message in self.receive_messages(delete=delete, max_num_messages=1):
             return message
 
     def receive_messages(
         self,
-        message_cls: Union[Type[SqsMessage], Sequence[Type[SqsMessage]]] = None,
         delete=False,
         max_num_messages=10,
-        accept_all=False,
     ) -> Generator[SqsMessage, None, None]:
         """
-        Receive multiple messages and yield them as instances of the specified
-        SqsMessage subclass(-es).
-        If the received message is of type not expected, the message will be immediately released
-        by changing its visibility timeout to 0 so that other consumers can see it.
-        Yields nothing if no messages were seen.
+        Receive multiple messages and yield them as instances of SqsMessage class.
         """
-        if message_cls:
-            if isinstance(message_cls, type):
-                message_classes = [message_cls]
-            else:
-                message_classes = message_cls
-        else:
-            message_classes = []
-        message_types = {mc.__name__: mc for mc in message_classes}
-
-        self.log.info(f"Polling {self.url} for message types [{', '.join(message_types)}], accept_all={accept_all}")
         resp = self.sqs.receive_message(
             QueueUrl=self.url,
             MaxNumberOfMessages=max_num_messages,
@@ -319,60 +184,33 @@ class SqsQueue(LogMixin, BotoMixin):
             return
 
         for raw_message in resp["Messages"]:
-            receipt_handle = raw_message["ReceiptHandle"]
-
-            if "MessageAttributes" in raw_message and "sqs_message_type" in raw_message["MessageAttributes"]:
-                raw_message_type_name = raw_message["MessageAttributes"]["sqs_message_type"]["StringValue"]
-                if message_types:
-                    if raw_message_type_name not in message_types:
-                        self.log.info(f"Releasing message of type {raw_message_type_name!r}")
-                        self.release_message(receipt_handle=receipt_handle)
-                        continue
-                    else:
-                        message_cls = message_types[raw_message_type_name]
-                else:
-                    self.log.debug(
-                        f"Interpreting message of type {raw_message_type_name} as {GenericSqsMessage.__name__}"
-                    )
-                    message_cls = GenericSqsMessage
-            elif message_types and not accept_all:
-                self.log.info(f"Releasing message of unspecified type")
-                self.release_message(receipt_handle=receipt_handle)
-                continue
-            else:
-                self.log.debug(f"Interpreting message of unspecified type as {GenericSqsMessage.__name__}")
-                message_cls = GenericSqsMessage
-
-            message = message_cls.from_sqs_dict(
-                raw_message,
-                queue=self,
-            )
+            message = SqsMessage.from_sqs_dict(raw_message, queue=self)
             if delete:
-                message.delete()
+                self.delete_message(message)
             yield message
 
-    def delete_message(self, *, receipt_handle: str):
+    def delete_message(self, message: "SqsMessage"):
         self.sqs.delete_message(
             QueueUrl=self.url,
-            ReceiptHandle=receipt_handle,
+            ReceiptHandle=message.receipt_handle,
         )
 
-    def change_visibility_timeout(self, *, receipt_handle: str, timeout: int):
+    def change_visibility_timeout(self, *, message: "SqsMessage", timeout: int):
         self.sqs.change_message_visibility(
             QueueUrl=self.url,
-            ReceiptHandle=receipt_handle,
+            ReceiptHandle=message.receipt_handle,
             VisibilityTimeout=int(round(timeout)),
         )
 
-    def release_message(self, *, receipt_handle: str):
+    def release_message(self, message: "SqsMessage"):
         """
         Make the message immediately visible to other queue consumers.
         """
-        self.change_visibility_timeout(receipt_handle=receipt_handle, timeout=0)
+        self.change_visibility_timeout(message=message, timeout=0)
 
-    def hold_message(self, *, receipt_handle: str, timeout: int):
+    def hold_message(self, message: "SqsMessage", *, timeout: int):
         """
         Request the message to not be released for another `timeout` seconds.
         This is just an alias for change_visibility_timeout()
         """
-        self.change_visibility_timeout(receipt_handle=receipt_handle, timeout=timeout)
+        self.change_visibility_timeout(message=message, timeout=timeout)
