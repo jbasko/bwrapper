@@ -73,7 +73,7 @@ class Job:
                     time.sleep(.1)
 
         if process.exitcode == 0:
-            log.info(f"Completed processing {self.message}")
+            log.debug(f"Completed processing {self.message}")
         else:
             log.error(f"Processing {self.message} exited with code {process.exitcode}")
             raise _JobFailed()
@@ -148,7 +148,7 @@ class Jobsy(LogMixin, RunLoopMixin):
             self.log.debug("Completed iteration, no messages received")
             return
 
-        self.log.info(f"Received {message}: {message.raw}")
+        self.log.debug(f"Received {message}: {message.raw}")
 
         message_copy = message.copy()
         message_copy.queue_url = message.queue_url

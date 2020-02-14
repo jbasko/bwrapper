@@ -146,14 +146,14 @@ class SqsQueue(LogMixin, BotoMixin):
         return self.url.endswith(".fifo")
 
     def send_message(self, message: SqsMessage):
-        self.log.info(f"Sending {message} to {self.url}")
+        self.log.debug(f"Sending {message} to {self.url}")
         try:
             self.sqs.send_message(**message.to_sqs_dict(QueueUrl=self.url))
         except Exception:
-            self.log.error(f"Sending message {message} failed:")
+            self.log.warning(f"Sending message {message} failed:")
             raise
         else:
-            self.log.info("Message sent")
+            self.log.debug("Message sent")
 
     def receive_message(self, delete=False) -> SqsMessage:
         """
@@ -180,7 +180,7 @@ class SqsQueue(LogMixin, BotoMixin):
         )
 
         if "Messages" not in resp:
-            self.log.info("No messages discovered")
+            self.log.debug("No messages discovered")
             return
 
         for raw_message in resp["Messages"]:
@@ -214,3 +214,6 @@ class SqsQueue(LogMixin, BotoMixin):
         This is just an alias for change_visibility_timeout()
         """
         self.change_visibility_timeout(message=message, timeout=timeout)
+
+    def __str__(self):
+        return str(self.url)

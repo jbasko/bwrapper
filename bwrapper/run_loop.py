@@ -56,7 +56,7 @@ class RunLoop(LogMixin):
 
         for predicate in self.predicates:
             if not predicate():
-                self.log.info(f"Predicate {predicate.__name__} is not true, stopping")
+                self.log.debug(f"Predicate {predicate.__name__} is not true, stopping")
                 return False
 
         self.current_iteration += 1
