@@ -233,10 +233,19 @@ class GenericSqsMessage(SqsMessage):
     def is_sns_notification(self):
         return self.MessageAttributes.sqs_body_type == "json" and self.body.get("Type") == "Notification"
 
-    def extract_sns_notification(self):
-        from bwrapper.sns import SnsNotification
-        if self.is_sns_notification:
-            return SnsNotification.from_sns_dict(self.extract_body())
+    def extract_sns_notification(self, translate_attributes=False):
+        """
+        Returns an instance of GenericSnsNotification which accepts any MessageAttributes.
+        """
+        if not self.is_sns_notification:
+            return
+
+        from bwrapper.sns import GenericSnsNotification
+        body = self.extract_body()
+        notif = GenericSnsNotification.from_sns_dict(body)
+        if translate_attributes:
+            notif.Attributes._update(**self.extract_attributes())
+        return notif
 
 
 class SqsQueue(LogMixin, BotoMixin):

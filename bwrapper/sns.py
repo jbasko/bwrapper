@@ -47,7 +47,17 @@ class SnsNotification(_SnsNotificationBase):
         if body:
             assert not message
             self.message_structure = message_structure or "json"
-            self.Body._update(**body)
+            for k, v in body.items():
+                if v is None:
+                    # Silently discard invalid Nones
+                    continue
+                elif isinstance(v, dict):
+                    value = json.dumps(v, sort_keys=True)
+                elif isinstance(v, str):
+                    value = v
+                else:
+                    raise TypeError(f"Expected body[{k!r}] to be a str or dict, got {type(v)}")
+                setattr(self.Body, k, value)
         elif message:
             assert self.message_structure != "json"
             self._str_message = message

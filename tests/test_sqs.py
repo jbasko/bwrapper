@@ -269,7 +269,8 @@ def test_extract_sns_message():
         "MessageId": "9f843e3f-3141-42af-813a-75cd9c5132ea",
         "ReceiptHandle": "blablabla",
         "MD5OfBody": "deadbeefbaddadabbabeefbaaa",
-        "Body": '{\n  "Type" : "Notification",\n  "MessageId" : "d9ba645b-6783-53be-b6b1-32e42aae84eb",\n  "TopicArn" : "arn:aws:sns:eu-west-1:account-id:topic-name",\n  "Subject" : "Are you listening?",\n  "Message" : "Hello again",\n  "Timestamp" : "2020-02-13T13:11:09.354Z",\n  "SignatureVersion" : "1",\n  "Signature" : "blablabla",\n  "SigningCertURL" : "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-234523452345234523452345.pem",\n  "UnsubscribeURL" : "https://sns.eu-west-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:eu-west-1:account-id:topic-name:beefdeafbaddadabbadeadbee10"\n}'  # noqa
+        "Body": '{\n  "Type" : "Notification",\n  "MessageId" : "d9ba645b-6783-53be-b6b1-32e42aae84eb",\n  "TopicArn" : "arn:aws:sns:eu-west-1:account-id:topic-name",\n  "Subject" : "Are you listening?",\n  "Message" : "Hello again",\n  "Timestamp" : "2020-02-13T13:11:09.354Z",\n  "SignatureVersion" : "1",\n  "Signature" : "blablabla",\n  "SigningCertURL" : "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-234523452345234523452345.pem",\n  "UnsubscribeURL" : "https://sns.eu-west-1.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:eu-west-1:account-id:topic-name:beefdeafbaddadabbadeadbee10"\n}'
+        # noqa
     })
 
     assert message.is_sns_notification
@@ -278,3 +279,19 @@ def test_extract_sns_message():
     assert notif.topic_arn == "arn:aws:sns:eu-west-1:account-id:topic-name"
     assert notif.subject == "Are you listening?"
     assert notif.message == "Hello again"
+
+
+def test_extract_sqs_attributes_to_sns_attributes():
+    message = GenericSqsMessage(
+        attributes={
+            "page_id": 15,
+            "page_type": "BlogPage",
+        },
+        body={
+            "Type": "Notification",
+        }
+    )
+
+    notif = message.extract_sns_notification(translate_attributes=True)
+    assert notif.Attributes.page_id == 15
+    assert notif.Attributes.page_type == "BlogPage"
