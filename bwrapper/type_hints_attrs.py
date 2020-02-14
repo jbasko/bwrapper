@@ -80,16 +80,26 @@ class TypeHintsAttrs:
                 if isinstance(getattr(b, name, None), TypeHintsAttrs)
             ]
 
+            definition_cls_dct = {
+                "accepts_anything": False,
+            }
+
+            parent_accepts_anything = any(getattr(d, "accepts_anything", None) for d in parent_definitions)
+            if parent_accepts_anything:
+                definition_cls_dct["accepts_anything"] = True
+
             if own_definition:
+                if getattr(own_definition, "accepts_anything", None):
+                    definition_cls_dct["accepts_anything"] = True
                 if parent_definitions:
-                    definition = type(name, (own_definition, *parent_definitions), {})
+                    definition = type(name, (own_definition, *parent_definitions), definition_cls_dct)
                 else:
                     definition = own_definition
             else:
                 if parent_definitions:
-                    definition = type(name, (*parent_definitions,), {})
+                    definition = type(name, (*parent_definitions,), definition_cls_dct)
                 else:
-                    definition = type("Unspecified", (), {})
+                    definition = type("Unspecified", (), definition_cls_dct)
 
         else:
             # Make sure that the definition type does not extend from TypeHintsAttrs

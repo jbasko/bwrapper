@@ -6,12 +6,14 @@ import pytest
 from bwrapper.sns import GenericSnsNotification, SnsNotification
 
 
+def test_sns_notification_basics():
+    assert not SnsNotification.Attributes._definition.accepts_anything
+    assert SnsNotification.Body._definition.accepts_anything
+
+
 @pytest.fixture
 def MyNotification() -> Type[SnsNotification]:
     class MyNotification(SnsNotification):
-        class Body:
-            func: str
-
         class Attributes:
             x: str
             y: int
@@ -25,7 +27,7 @@ def test_sns_notification(MyNotification):
         topic_arn="arn:topic",
         attributes={"x": "12", "y": "34"},
         message_structure="json",
-        body={"func": "do.something"},
+        body={"default": "Do something!"},
     )
     assert notif.subject == "Ha"
     assert notif.topic_arn == "arn:topic"
@@ -43,13 +45,13 @@ def test_sns_notification(MyNotification):
             "StringValue": "34",
         },
     }
-    assert notif.message == json.dumps({"func": "do.something"}, sort_keys=True)
+    assert notif.message == json.dumps({"default": "Do something!"}, sort_keys=True)
 
 
 def test_from_raw_sns_dict(MyNotification):
     notif = MyNotification.from_sns_dict({
         "MessageStructure": "json",
-        "Message": "{\"func\": \"do.something\"}",
+        "Message": "{\"default\": \"Do something!\"}",
         "TopicArn": "arn:topic",
         "Subject": "Ha",
         "MessageAttributes": {
@@ -60,7 +62,7 @@ def test_from_raw_sns_dict(MyNotification):
 
     assert notif.subject == "Ha"
     assert notif.topic_arn == "arn:topic"
-    assert notif.Body.func == "do.something"
+    assert notif.Body.default == "Do something!"
     assert notif.Attributes.x == "12"
     assert notif.Attributes.y == 34
 
@@ -82,21 +84,22 @@ def test_generic_sns_notification():
         subject="The Subject",
         attributes={},
         body={
-            "page": {
+            "default": {
                 "id": 123,
-                "type": "BlogPage",
             },
+            "something_else": "pure string",
         },
     )
-    assert notif.Body.page == {
-        "id": 123,
-        "type": "BlogPage",
-    }
+    assert notif.Body.default == json.dumps({"id": 123})
+    assert notif.Body.something_else == "pure string"
     assert notif.message_structure == "json"
 
     assert notif.to_sns_dict() == {
         "Subject": "The Subject",
         "TopicArn": "arn:topic",
         "MessageStructure": "json",
-        "Message": json.dumps({"page": {"id": 123, "type": "BlogPage"}}, sort_keys=True),
+        "Message": json.dumps({
+            "default": json.dumps({"id": 123}),
+            "something_else": "pure string",
+        }, sort_keys=True),
     }

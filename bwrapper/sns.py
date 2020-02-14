@@ -21,6 +21,9 @@ class SnsNotification(_SnsNotificationBase):
     subject: str
     message_structure: str
 
+    class Body:
+        accepts_anything = True
+
     def __init__(
         self,
         *,
@@ -150,7 +153,4 @@ class SnsNotification(_SnsNotificationBase):
 
 class GenericSnsNotification(SnsNotification):
     class Attributes:
-        accepts_anything = True
-
-    class Body:
         accepts_anything = True
