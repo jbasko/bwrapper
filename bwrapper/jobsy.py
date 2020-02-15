@@ -3,6 +3,7 @@ Jobsy is a single-process worker or job scheduler (when called with --enqueue).
 """
 
 import argparse
+import contextlib
 import dataclasses
 import importlib
 import itertools
@@ -108,13 +109,11 @@ class Jobsy(LogMixin, RunLoopMixin):
         queue_or_queues: Union[SqsQueue, List[SqsQueue]],
         same_process: bool = False,
         max_iterations: int = None,
-        job_failed_callback: Callable = None,
         job_handler_path: str = None,
         default_timeout: int = None,
     ):
         super().__init__()
         self.queues: List[SqsQueue] = [queue_or_queues] if isinstance(queue_or_queues, SqsQueue) else queue_or_queues
-        self.job_failed_callback = job_failed_callback
         self._same_process = same_process
         self._queues_generator: Iterator[SqsQueue] = itertools.cycle(self.queues)
         self.job_handler = None
@@ -133,15 +132,7 @@ class Jobsy(LogMixin, RunLoopMixin):
         num_queues_checked = 0
         while message is None and num_queues_checked < len(self.queues):
             queue = next(self._queues_generator)
-
-            m: SqsMessage
-            for m in queue.receive_messages():
-                if message is None:
-                    message = m
-                else:
-                    self.log.debug(f"Releasing {m}")
-                    m.release()
-
+            message = queue.receive_message()
             num_queues_checked += 1
 
         if message is None:
@@ -149,50 +140,71 @@ class Jobsy(LogMixin, RunLoopMixin):
             return
 
         self.log.debug(f"Received {message}: {message.raw}")
+        self.handle_message(message)
+        self.log.debug("Completed iteration")
 
+    def handle_message(self, message: SqsMessage):
+        with self.job_context(message=message, timeout=self.default_timeout) as job:
+            self.handle_job(job=job)
+
+    @contextlib.contextmanager
+    def job_context(
+        self,
+        message: SqsMessage,
+        timeout: int = None,
+        delete_on_failure=True,
+    ) -> Job:
+        """
+        Context manager that takes care of:
+        1) changing message visibility according to the timeout
+        2) releasing or deleting the message afterwards.
+        """
+        if timeout is not None:
+            # Ensure that we hold on to the message for at least as long as the interval
+            # between checking on progress
+            message.hold(timeout=timeout + self._max_process_check_interval + 5)
+
+        has_failed = None
+
+        try:
+            yield self.create_job_from_message(message, timeout=timeout)
+        except Exception as exception:
+            has_failed = True
+            self.handle_failure(message=message, exception=exception)
+            if delete_on_failure:
+                message.delete()
+            else:
+                message.release()
+        finally:
+            if not has_failed:
+                message.delete()
+
+    def create_job_from_message(self, message: SqsMessage, timeout: int = None) -> Job:
         message_copy = message.copy()
         message_copy.queue_url = message.queue_url
-        job = Job(
+        return Job(
             func=self.job_handler,
             args=(),
             kwargs={
                 # Pass a copy based on the raw message. Queue object must not be passed as part of the message.
                 "message": message_copy,
             },
-            timeout=self.default_timeout,
+            timeout=timeout or self.default_timeout,
             message=message,
         )
 
-        # Ensure that we hold on to the message for at least as long as the interval
-        # between checking on progress
-        message.hold(timeout=job.timeout + self._max_process_check_interval + 5)
-
-        try:
-            if self._same_process:
-                job.run_in_same_process(log=self.log)
-            else:
-                job.run_in_separate_process(log=self.log)
-        except _JobFailed as exception:
-            self._handle_job_failed(job=job, exception=exception)
-            pass
-        finally:
-            # We delete all jobs, even those processing of which failed.
-            message.delete()
-
-        self.log.debug("Completed iteration")
-
-    def _handle_job_failed(self, job: Job, exception: Exception):
+    def handle_failure(self, message: SqsMessage, exception: Exception, **kwargs):
         """
-        Do not override this method. Instead, pass job_failed_callback to Jobsy initialiser.
+        Override this method as needed.
+        The message will be deleted/released after this method returns.
         """
-        if not self.job_failed_callback:
-            return
+        pass
 
-        try:
-            self.job_failed_callback(job=job, exception=exception)
-        except Exception as cbe:
-            self.log.warning("Job failed callback failed with an exception:")
-            self.log.exception(cbe)
+    def handle_job(self, job: Job):
+        if self._same_process:
+            job.run_in_same_process(log=self.log)
+        else:
+            job.run_in_separate_process(log=self.log)
 
 
 def main():
