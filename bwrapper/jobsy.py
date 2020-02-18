@@ -106,22 +106,42 @@ class Jobsy(LogMixin, RunLoopMixin):
 
     def __init__(
         self,
-        queue_or_queues: Union[SqsQueue, List[SqsQueue]],
+        queues: Union[str, List[str], SqsQueue, List[SqsQueue]],
+        *,
         same_process: bool = False,
         max_iterations: int = None,
-        job_handler_path: str = None,
+        job_runner_path: str = None,
         default_timeout: int = None,
+        delete_on_failure: bool = False,
     ):
         super().__init__()
-        self.queues: List[SqsQueue] = [queue_or_queues] if isinstance(queue_or_queues, SqsQueue) else queue_or_queues
+
+        self.queues = []
+        if isinstance(queues, SqsQueue):
+            self.queues.append(queues)
+        elif isinstance(queues, str):
+            self.queues.append(SqsQueue(url=queues))
+        else:
+            for q in queues:
+                if isinstance(q, str):
+                    self.queues.append(SqsQueue(url=q))
+                else:
+                    self.queues.append(q)
+
         self._same_process = same_process
         self._queues_generator: Iterator[SqsQueue] = itertools.cycle(self.queues)
-        self.job_handler = None
-        if job_handler_path:
-            self.job_handler = resolve_func_call(func_path=job_handler_path)
+
+        self._job_runner = None
+        if job_runner_path:
+            self._job_runner = resolve_func_call(func_path=job_runner_path)
+
         if max_iterations:
             self.run_loop.max_iterations = max_iterations
+
         self.default_timeout = default_timeout or DEFAULT_TIMEOUT
+
+        # If set to True, SQS messages will be deleted even when the job handling fails.
+        self.delete_on_failure = delete_on_failure
 
     def run_single_iteration(self):
 
@@ -144,21 +164,27 @@ class Jobsy(LogMixin, RunLoopMixin):
         self.log.debug("Completed iteration")
 
     def handle_message(self, message: SqsMessage):
-        with self.job_context(message=message, timeout=self.default_timeout) as job:
+        with self.job_context(message=message) as job:
             self.handle_job(job=job)
 
     @contextlib.contextmanager
     def job_context(
         self,
         message: SqsMessage,
+        *,
+        delete_on_failure=None,
         timeout: int = None,
-        delete_on_failure=True,
     ) -> Job:
         """
         Context manager that takes care of:
         1) changing message visibility according to the timeout
         2) releasing or deleting the message afterwards.
         """
+        if delete_on_failure is None:
+            delete_on_failure = self.delete_on_failure
+        if timeout is None:
+            timeout = self.default_timeout
+
         if timeout is not None:
             # Ensure that we hold on to the message for at least as long as the interval
             # between checking on progress
@@ -183,7 +209,7 @@ class Jobsy(LogMixin, RunLoopMixin):
         message_copy = message.copy()
         message_copy.queue_url = message.queue_url
         return Job(
-            func=self.job_handler,
+            func=self._job_runner or self.run_job,
             args=(),
             kwargs={
                 # Pass a copy based on the raw message. Queue object must not be passed as part of the message.
@@ -205,6 +231,9 @@ class Jobsy(LogMixin, RunLoopMixin):
             job.run_in_same_process(log=self.log)
         else:
             job.run_in_separate_process(log=self.log)
+
+    def run_job(self, *args, **kwargs):
+        raise NotImplementedError()
 
 
 def main():
@@ -244,7 +273,7 @@ def main():
         queues,
         same_process=args.same_process,
         max_iterations=args.max_iterations,
-        job_handler_path=args.handler_path,
+        job_runner_path=args.handler_path,
     )
     jobsy.log.setLevel(log_level)
     jobsy.run()

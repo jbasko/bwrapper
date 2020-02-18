@@ -42,6 +42,7 @@ class Boto:
 
     sqs = ClientOrResource(requires_region=True)
     sns = ClientOrResource(requires_region=True)
+    sts = ClientOrResource()
 
     # Examples:
     # sfn = ClientOrResource(service_name="stepfunctions", requires_region=True)
@@ -59,3 +60,7 @@ class BotoMixin:
     @property
     def sns(self):
         return Boto.sns
+
+    @property
+    def sts(self):
+        return Boto.sts

@@ -62,7 +62,7 @@ class SqsMessage:
         system_attributes = overrides.pop("system_attributes", None) or self.system_attributes
 
         dct["QueueUrl"] = self.queue_url
-        dct["MessageBody"] = self.body
+        dct["MessageBody"] = self.body or "{}"
         if self.delay_seconds is not None:
             dct["DelaySeconds"] = self.delay_seconds
         if attributes:

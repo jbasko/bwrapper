@@ -14,8 +14,8 @@ class Notsy(BotoMixin, LogMixin):
     def __init__(self):
         super().__init__()
 
-    def publish(self, **params):
-        return self.sns.publish(**params)
+    def publish(self, notification: SnsNotification):
+        return self.sns.publish(**notification.to_sns_dict())
 
 
 def main():
